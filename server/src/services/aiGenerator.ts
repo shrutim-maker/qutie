@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { Requirement, TestCase, TestStep } from '../types.js';
 import type { PageContext } from './pageScout.js';
 
-const MODEL = process.env.QUTIE_AI_MODEL ?? 'claude-opus-4-8';
+const MODEL = process.env.QUTIE_AI_MODEL ?? process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8';
 const MAX_REQUIREMENTS = 60;
 
 const STEP_ACTIONS = [

@@ -1137,20 +1137,20 @@ async function executeStep(
       const el = page.locator(step.target!);
       const count = await el.count();
       if (count === 0) return { success: false, error: `Element not found: ${step.target}`, blocked: true };
-      await el.fill(resolveValue(step.value));
+      await el.first().fill(resolveValue(step.value));
       return { success: true };
     }
     case 'click': {
       const el = page.locator(step.target!);
       if ((await el.count()) === 0) return { success: false, error: `Element not found: ${step.target}`, blocked: true };
-      await el.click();
+      await el.first().click();
       await page.waitForTimeout(300);
       return { success: true };
     }
     case 'select': {
       const el = page.locator(step.target!);
       if ((await el.count()) === 0) return { success: false, error: `Select not found: ${step.target}`, blocked: true };
-      await el.selectOption(step.value!);
+      await el.first().selectOption(step.value!);
       return { success: true };
     }
     case 'assert-page-contains': {
@@ -1176,9 +1176,9 @@ async function executeStep(
     case 'assert-text': {
       const el = page.locator(step.target!);
       if ((await el.count()) === 0) return { success: false, error: `Element not found: ${step.target}` };
-      const text = await el.textContent();
-      if (!text?.includes(step.value!)) {
-        return { success: false, error: `Expected "${step.value}", got "${text?.trim()}"` };
+      const texts = await el.allTextContents();
+      if (!texts.some((t) => t.includes(step.value!))) {
+        return { success: false, error: `Expected "${step.value}", got "${texts.map((t) => t.trim()).join(' | ').slice(0, 120)}"` };
       }
       return { success: true };
     }
