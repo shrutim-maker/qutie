@@ -1,0 +1,28 @@
+{
+  "colors": {
+    "--shipped": "#14B8A6",
+    "--pass": "#67B68F",
+    "--fail": "#D76666",
+    "--warn": "#E69A4F",
+    "--alert": "#BF182C",
+    "--navy-primary": "#1D3E69",
+    "--navy-rail": "#06192F",
+    "--cyan": "#56E6FF",
+    "--outline": "#2179C4",
+    "--booked": "#1D406A"
+  },
+  "spacing": {
+    "--space-xs": "4px",
+    "--space-sm": "8px",
+    "--space-md": "16px",
+    "--space-lg": "24px"
+  },
+  "radius": {
+    "--radius": "5.88px",
+    "--radius-pill": "22.02px"
+  },
+  "typography": {
+    "--font-family": "Poppins, sans-serif",
+    "--font-size-base": "13.33px"
+  }
+}

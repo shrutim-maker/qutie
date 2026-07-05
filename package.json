@@ -1,0 +1,16 @@
+{
+  "name": "qutie",
+  "version": "1.0.0",
+  "private": true,
+  "description": "QUTIE — Quloi Unified Testing & Intelligence Engine",
+  "workspaces": ["server", "client", "demo-app"],
+  "scripts": {
+    "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w client\"",
+    "dev:demo": "concurrently \"npm run dev -w server\" \"npm run dev -w client\" \"npm run dev -w demo-app\"",
+    "build": "npm run build -w client && npm run build -w server",
+    "start": "npm run start -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
