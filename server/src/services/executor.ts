@@ -1219,13 +1219,23 @@ async function executeStep(
       return { success: true };
     }
     case 'assert-page-contains': {
-      // Auto-wait: SPAs render/redirect asynchronously, so poll before declaring failure
+      // Auto-wait: SPAs render/redirect asynchronously, so poll before declaring failure.
+      // Loose matching: pattern words must appear in order, allowing up to 2 words in
+      // between ("enter password" matches "Please enter your password").
       const patterns = (step.value ?? '').split('|').map((p) => p.trim()).filter(Boolean);
       if (!patterns.length) return { success: true };
+      const matchers = patterns.map((p) => {
+        const words = p
+          .toLowerCase()
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        return new RegExp(words.join('\\W+(?:\\w+\\W+){0,2}'));
+      });
       const deadline = Date.now() + 10000;
       for (;;) {
         const bodyText = ((await page.locator('body').textContent().catch(() => '')) ?? '').toLowerCase();
-        if (patterns.some((p) => bodyText.includes(p.toLowerCase()))) return { success: true };
+        if (matchers.some((m) => m.test(bodyText))) return { success: true };
         if (Date.now() >= deadline) break;
         await page.waitForTimeout(500);
       }

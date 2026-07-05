@@ -105,11 +105,19 @@ export async function parseDocument(
   let text: string;
 
   if (ext === '.docx') {
-    const result = await mammoth.extractRawText({ buffer });
-    text = result.value;
+    try {
+      const result = await mammoth.extractRawText({ buffer });
+      text = result.value;
+    } catch {
+      throw new Error(`"${filename}" is not a readable Word document — re-export it as .docx and try again`);
+    }
   } else if (ext === '.pdf') {
-    const result = await pdfParse(buffer);
-    text = result.text;
+    try {
+      const result = await pdfParse(buffer);
+      text = result.text;
+    } catch {
+      throw new Error(`"${filename}" is not a readable PDF — check the file and try again`);
+    }
   } else if (ext === '.md' || ext === '.txt') {
     text = buffer.toString('utf-8');
   } else {

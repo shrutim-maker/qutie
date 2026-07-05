@@ -67,7 +67,7 @@ Step actions and their exact runtime semantics:
 - fill: target is a CSS selector; value is the text to type. The placeholders {{username}} and {{password}} are substituted with the run credentials.
 - click: target is a CSS selector (Playwright syntax, ":has-text()" is allowed).
 - select: target is a CSS selector for a <select>; value is the option value or label.
-- assert-page-contains: value is a pipe-separated list of phrases; passes if the page body contains ANY of them (case-insensitive). Use 2-4 alternatives to make intent checks robust.
+- assert-page-contains: value is a pipe-separated list of phrases; passes if ANY phrase matches the page body (case-insensitive; words must appear in order but up to 2 extra words may sit between them, so "enter password" matches "Please enter your password"). Use 2-4 alternatives to make intent checks robust.
 - assert-visible: target is a CSS selector; passes if at least one match is visible. Comma-separated selector alternatives are allowed.
 - assert-text: target is a CSS selector; value must appear in its text content.
 - assert-count: target is a CSS selector; value is the exact expected match count.
@@ -81,6 +81,7 @@ Rules:
 4. When no page context is provided, use robust generic selectors (semantic elements, roles, broad comma-separated alternatives) and assert-page-contains for intent checks.
 5. Prefer shallow, reliable assertions over deep multi-page flows the runner cannot sustain. Each test case should have 2-6 steps.
 5b. Actions like Logout, Profile, or Settings usually live inside an avatar/user menu in SPAs. If the page context does not show a directly visible button for them, first click the menu trigger (avatar, user name, or profile button visible in the page context), then click the action. If the page context gives no evidence of where such an action lives, prefer asserting its visible effects instead of guessing selectors.
+5c. Never navigate to invented paths. Only navigate to: the login path, "/", or paths that appear in the page context (links/urls). SPAs have no /logout, /settings, etc. routes — performing those actions requires clicking UI elements, not navigation.
 6. Keep titles short and prefixed with the case type, e.g. "[Negative] Booking rejects empty destination".
 7. preconditions and testData are short human-readable strings. expectedResult states the observable outcome.
 8. For steps where target or value is not applicable, use an empty string.`;
