@@ -28,8 +28,16 @@ export interface ConfluenceIngestBody {
   apiToken?: string;
 }
 
+export interface GenerateBody {
+  instructions?: string;
+  targetUrl?: string;
+  loginUrl?: string;
+  username?: string;
+  password?: string;
+}
+
 export const api = {
-  health: () => request<{ status: string }>('/health'),
+  health: () => request<{ status: string; aiGeneration?: boolean }>('/health'),
   getRequirements: () =>
     request<{ requirements: import('./types').Requirement[]; total: number; sources: RequirementSource[] }>('/requirements'),
   deleteRequirementSource: (sourceType: string, sourceRef: string) =>
@@ -70,10 +78,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ jql, issueKeys }),
     }),
-  generate: (instructions?: string) =>
-    request<{ testCases: import('./types').TestCase[]; coverage: import('./types').Coverage }>('/generate', {
+  generate: (body: GenerateBody = {}) =>
+    request<{
+      testCases: import('./types').TestCase[];
+      coverage: import('./types').Coverage;
+      generator?: 'ai' | 'heuristic';
+      generatorNote?: string;
+    }>('/generate', {
       method: 'POST',
-      body: JSON.stringify(instructions !== undefined ? { instructions } : {}),
+      body: JSON.stringify(body),
     }),
   getTestCases: () => request<{ testCases: import('./types').TestCase[]; coverage: import('./types').Coverage }>('/test-cases'),
   run: (body: { targetUrl: string; loginUrl?: string; username: string; password: string; brokenMode?: boolean; instructions?: string }) =>

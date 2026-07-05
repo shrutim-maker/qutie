@@ -4,6 +4,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { db, audit, getSessionState, setSessionState } from '../db.js';
 import { parseDocument, parseJiraIssues, parsePastedText } from '../services/ingestion.js';
 import { generateTestCases, computeCoverage } from '../services/testGenerator.js';
+import { generateTestCasesWithAI, isAiConfigured } from '../services/aiGenerator.js';
+import { collectPageContext } from '../services/pageScout.js';
 import { executeTestSuite, summarizeResults, checkProductionUrl, normalizeTargetUrl } from '../services/executor.js';
 import type { ProgressReporter } from '../services/executor.js';
 import {
@@ -311,7 +313,7 @@ function requireRequirements(res: import('express').Response): Requirement[] | n
 }
 
 apiRouter.get('/health', (_req, res) => {
-  res.json({ status: 'ok', product: 'QUTIE', version: '1.0.0-mvp' });
+  res.json({ status: 'ok', product: 'QUTIE', version: '1.0.0-mvp', aiGeneration: isAiConfigured() });
 });
 
 apiRouter.get('/instructions', (_req, res) => {
@@ -472,7 +474,7 @@ apiRouter.post('/ingest/paste', (req, res) => {
   }
 });
 
-apiRouter.post('/generate', (req, res) => {
+apiRouter.post('/generate', async (req, res) => {
   const reqs = requireRequirements(res);
   if (!reqs) return;
 
@@ -481,7 +483,37 @@ apiRouter.post('/generate', (req, res) => {
     saveInstructions(req.body.instructions.trim());
   }
 
-  const testCases = generateTestCases(reqs, instructions);
+  const { targetUrl, loginUrl, username, password, useAI } = req.body ?? {};
+
+  let testCases: TestCase[] = [];
+  let generator: 'ai' | 'heuristic' = 'heuristic';
+  let generatorNote: string | undefined;
+
+  if (isAiConfigured() && useAI !== false) {
+    try {
+      // Optional scout: capture real selectors from the target build so AI steps match the app
+      const pageContext =
+        typeof targetUrl === 'string' && targetUrl.trim()
+          ? await collectPageContext(targetUrl, {
+              username: typeof username === 'string' ? username : '',
+              password: typeof password === 'string' ? password : '',
+              loginUrl: typeof loginUrl === 'string' ? loginUrl : undefined,
+            })
+          : undefined;
+
+      testCases = await generateTestCasesWithAI(reqs, instructions, pageContext);
+      generator = 'ai';
+      if (typeof targetUrl === 'string' && targetUrl.trim() && !pageContext) {
+        generatorNote = 'Target app could not be scouted — AI used generic selectors';
+      }
+    } catch (err) {
+      generatorNote = `AI generation unavailable (${err instanceof Error ? err.message : 'unknown error'}) — used template generator`;
+    }
+  }
+
+  if (!testCases.length) {
+    testCases = generateTestCases(reqs, instructions);
+  }
   if (!testCases.length) {
     return res.status(400).json({ error: 'No testable requirements found. Check for ambiguous or non-testable items.' });
   }
@@ -489,8 +521,13 @@ apiRouter.post('/generate', (req, res) => {
   saveTestCases(testCases);
   const coverage = computeCoverage(reqs, testCases);
 
-  audit('user', 'generate_tests', { count: testCases.length, coverage: coverage.percentage, hasInstructions: !!instructions });
-  res.json({ testCases, coverage, ambiguous: reqs.filter((r) => r.ambiguous), instructions });
+  audit('user', 'generate_tests', {
+    count: testCases.length,
+    coverage: coverage.percentage,
+    hasInstructions: !!instructions,
+    generator,
+  });
+  res.json({ testCases, coverage, ambiguous: reqs.filter((r) => r.ambiguous), instructions, generator, generatorNote });
 });
 
 apiRouter.get('/test-cases', (_req, res) => {

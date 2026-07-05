@@ -39,9 +39,20 @@ Open **http://localhost:5173** for the QUTIE dashboard.
 | Dashboard UI | `client/` | React + Vite |
 | Demo target app | `demo-app/` | Local test target on :4000 (optional) |
 
+## AI test generation
+
+Set `ANTHROPIC_API_KEY` in `.env` to switch test generation from templates to **Claude** (`claude-opus-4-8` by default, override with `QUTIE_AI_MODEL`):
+
+- Claude reads every ingested requirement and writes tailored test cases (positive, negative, edge, design) with steps in QUTIE's executable action set.
+- If a **Product URL** (and credentials, for apps behind login) is set before generating, QUTIE first *scouts* the live app — logs in, captures DOM digests of the landing page and nearby pages — so generated steps use selectors that actually exist.
+- Without a key, or if the API call fails, QUTIE falls back to the built-in template generator automatically (the UI shows which generator ran).
+
 ## Environment variables
 
 ```bash
+# Optional — enables Claude-powered test generation (falls back to templates without it)
+ANTHROPIC_API_KEY=your-key
+QUTIE_AI_MODEL=claude-opus-4-8
 # Optional — allow running against production hosts (FR-17 override)
 ALLOW_PRODUCTION_URL=true
 
