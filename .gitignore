@@ -9,3 +9,4 @@ server/data/*.db
 server/data/evidence/
 *.tsbuildinfo
 .cursor/
+*.zip
