@@ -68,6 +68,9 @@ export default function App() {
   const [pasteText, setPasteText] = useState('');
   const [pasteSourceType, setPasteSourceType] = useState<'frd' | 'brd'>('frd');
   const [aiEnabled, setAiEnabled] = useState(false);
+  const [expandedCases, setExpandedCases] = useState<Set<string>>(new Set());
+  const [priorityOverride, setPriorityOverride] = useState('');
+  const [filing, setFiling] = useState(false);
 
   const refreshRequirements = useCallback(async () => {
     try {
@@ -97,6 +100,19 @@ export default function App() {
     refreshTestCases();
     api.getInstructions().then((d) => setInstructions(d.instructions)).catch(() => {});
     api.health().then((d) => setAiEnabled(!!d.aiGeneration)).catch(() => {});
+    // Restore the latest run so Results/Bugs survive a page refresh
+    fetch('/api/runs/latest')
+      .then((r) => r.json())
+      .then((run: TestRun | null) => {
+        if (run && run.id) {
+          setLatestRun(run);
+          setResults(run.results ?? []);
+          setBugs(run.bugs ?? []);
+          setRunLabel('Run complete');
+          setRunProgress(100);
+        }
+      })
+      .catch(() => {});
   }, [refreshRequirements, refreshTestCases]);
 
   const go = useCallback((v: View) => {
@@ -264,7 +280,6 @@ export default function App() {
         loginUrl: loginUrl.trim() || undefined,
         username,
         password,
-        brokenMode: targetUrl.includes('broken=1'),
         instructions,
       });
 
@@ -392,6 +407,7 @@ export default function App() {
 
   const openBugModal = async (bug: BugReport) => {
     setActiveBug(bug);
+    setPriorityOverride(bug.priority);
     const preview = await api.previewBug(bug.id);
     const p = preview.payload;
     setModalPayload(
@@ -403,10 +419,39 @@ export default function App() {
   };
 
   const confirmFile = async () => {
-    if (!activeBug) return;
-    const res = await api.fileBug(activeBug.id);
-    setBugs((prev) => prev.map((b) => (b.id === activeBug.id ? { ...b, ...res.bug } : b)));
-    setModalOpen(false);
+    if (!activeBug || filing) return;
+    setFiling(true);
+    try {
+      const overrides = priorityOverride && priorityOverride !== activeBug.priority ? { priority: priorityOverride } : {};
+      const res = await api.fileBug(activeBug.id, overrides);
+      setBugs((prev) => prev.map((b) => (b.id === activeBug.id ? { ...b, ...res.bug } : b)));
+      setModalOpen(false);
+    } catch (err) {
+      setModalPayload((p) => `${p}\n\n// Filing failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+    } finally {
+      setFiling(false);
+    }
+  };
+
+  const toggleCaseExpand = (id: string) => {
+    setExpandedCases((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleDeleteCase = async (tc: TestCase) => {
+    if (!window.confirm(`Remove ${tc.id} — "${tc.title}"? It will be excluded from the next run.`)) return;
+    try {
+      await api.deleteTestCase(tc.id);
+      const data = await api.getTestCases();
+      setTestCases(data.testCases);
+      setCoverage(data.coverage);
+    } catch (err) {
+      setGenStatus(err instanceof Error ? err.message : 'Delete failed');
+    }
   };
 
   const tcMap = new Map(testCases.map((tc) => [tc.id, tc]));
@@ -568,7 +613,9 @@ export default function App() {
                 </div>
               )}
               <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <button className="btn btn-primary" disabled={generating || !hasRequirements} onClick={handleGenerate}>✦ Generate test cases</button>
+                <button className="btn btn-primary" disabled={generating || !hasRequirements} onClick={handleGenerate}>
+                  {generating ? <><span className="spinner" /> Generating…</> : '✦ Generate test cases'}
+                </button>
                 <span style={{ fontSize: 10, color: genStatus.includes('ready') ? 'var(--pass)' : 'var(--t-muted)' }}>{genStatus}</span>
               </div>
             </div>
@@ -594,23 +641,52 @@ export default function App() {
                       </div>
                     </div>
                     <button className="btn btn-primary" onClick={handleRun} disabled={running}>
-                      ▶ Run suite ({testCases.length})
+                      {running ? <><span className="spinner" /> Running…</> : `▶ Run suite (${testCases.length})`}
                     </button>
                   </div>
                 </div>
                 <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
                   <table className="tbl">
-                    <thead><tr><th>ID</th><th>Test case</th><th>Source</th><th>Type</th><th style={{ textAlign: 'right' }}>Steps</th></tr></thead>
+                    <thead><tr><th style={{ width: 28 }}></th><th>ID</th><th>Test case</th><th>Source</th><th>Type</th><th style={{ textAlign: 'right' }}>Steps</th><th style={{ width: 40 }}></th></tr></thead>
                     <tbody>
-                      {testCases.map((c) => (
-                        <tr key={c.id}>
-                          <td className="tc-id">{c.id}</td>
-                          <td>{c.title}</td>
-                          <td><span className="req-link">{c.requirementId}</span></td>
-                          <td><span style={{ fontSize: 9, color: 'var(--t-secondary)' }}>{c.type}</span></td>
-                          <td style={{ textAlign: 'right', color: 'var(--t-muted)' }}>{c.steps?.length ?? 0}</td>
-                        </tr>
-                      ))}
+                      {testCases.map((c) => {
+                        const expanded = expandedCases.has(c.id);
+                        return (
+                          <Fragment key={c.id}>
+                            <tr className={expanded ? 'expanded-row' : ''}>
+                              <td>
+                                <button type="button" className="expand-btn" onClick={() => toggleCaseExpand(c.id)} aria-expanded={expanded} title="View steps">
+                                  {expanded ? '▼' : '▶'}
+                                </button>
+                              </td>
+                              <td className="tc-id">{c.id}</td>
+                              <td>{c.title}</td>
+                              <td><span className="req-link">{c.requirementId}</span></td>
+                              <td><span className={`type-badge t-${c.type.toLowerCase()}`}>{c.type}</span></td>
+                              <td style={{ textAlign: 'right', color: 'var(--t-muted)' }}>{c.steps?.length ?? 0}</td>
+                              <td>
+                                <button type="button" className="icon-btn" title={`Remove ${c.id}`} aria-label={`Remove ${c.id}`} onClick={() => handleDeleteCase(c)}>✕</button>
+                              </td>
+                            </tr>
+                            {expanded && (
+                              <tr className="tc-steps-row">
+                                <td colSpan={7}>
+                                  <div className="tc-steps">
+                                    {(c.steps ?? []).map((s) => (
+                                      <div key={s.order} className="tc-step">
+                                        <span className="n">{s.order}.</span>
+                                        <span className="a">{s.action}</span>
+                                        <span className="t">{[s.target, s.value ? `= ${s.value}` : ''].filter(Boolean).join(' ')}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <div className="tc-expected"><b>Expected:</b> {c.expectedResult}</div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -704,6 +780,13 @@ export default function App() {
                       ))}
                     </ol>
                   </details>
+                )}
+
+                {latestRun && (
+                  <div style={{ fontSize: 9.5, color: 'var(--t-muted)', margin: '2px 2px 10px' }}>
+                    Target <span style={{ color: 'var(--t-secondary)', fontWeight: 500 }}>{latestRun.targetUrl}</span>
+                    {' · '}Chromium (headless){' · '}{new Date(latestRun.timestamp).toLocaleString()}
+                  </div>
                 )}
 
                 {latestRun && (
@@ -839,26 +922,36 @@ export default function App() {
                   <div className="card-h">Release readiness</div>
                   <div className="card-sub">Weighted from pass rate, coverage, open bug severity, and design token compliance</div>
                   <div className="readiness">
-                    <div className="gauge">
-                      <svg viewBox="0 0 160 160" style={{ transform: 'rotate(-90deg)' }}>
-                        <circle cx="80" cy="80" r="66" fill="none" stroke="var(--track)" strokeWidth="14" />
-                        <circle cx="80" cy="80" r="66" fill="none" stroke="var(--warn)" strokeWidth="14" strokeLinecap="round"
-                          strokeDasharray="414" strokeDashoffset={414 - (414 * (latestRun?.readiness.score ?? gaugeScore)) / 100} />
-                      </svg>
-                      <div className="mood">
-                        <QutieMark mood="neutral" size={52} />
-                        <div className="score">{latestRun?.readiness.score ?? gaugeScore}</div>
-                        <div className="band" style={{ color: latestRun?.readiness.band === 'go' ? 'var(--pass)' : 'var(--warn)' }}>
-                          {(latestRun?.readiness.band ?? 'caution').toUpperCase()}
-                        </div>
-                      </div>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <ScoreRow label="Pass rate" value={`${latestRun?.summary.passRate ?? 0}%`} width={latestRun?.summary.passRate ?? 0} color="var(--warn)" />
-                      <ScoreRow label="Requirement coverage" value={`${latestRun?.coverage.percentage ?? coverage?.percentage ?? 0}%`} width={latestRun?.coverage.percentage ?? coverage?.percentage ?? 0} color="var(--outline)" />
-                      <ScoreRow label="Design token compliance" value={`${latestRun?.designCompliance ?? 0}%`} width={latestRun?.designCompliance ?? 0} color="var(--pass)" />
-                      <ScoreRow label="Open bug weight" value={latestRun ? (latestRun.bugs.length > 0 ? 'Hi' : 'Low') : '—'} width={latestRun?.bugs.length ? 65 : 10} color="var(--fail)" />
-                    </div>
+                    {(() => {
+                      const band = latestRun?.readiness.band ?? 'caution';
+                      const bandColor = band === 'go' ? 'var(--pass)' : band === 'no-go' ? 'var(--fail)' : 'var(--warn)';
+                      const bugWeight = latestRun?.readiness.inputs?.openBugWeight ?? 0;
+                      const bugWeightLabel = bugWeight >= 50 ? 'High' : bugWeight >= 20 ? 'Moderate' : 'Low';
+                      return (
+                        <>
+                          <div className="gauge">
+                            <svg viewBox="0 0 160 160" style={{ transform: 'rotate(-90deg)' }}>
+                              <circle cx="80" cy="80" r="66" fill="none" stroke="var(--track)" strokeWidth="14" />
+                              <circle cx="80" cy="80" r="66" fill="none" stroke={bandColor} strokeWidth="14" strokeLinecap="round"
+                                strokeDasharray="414" strokeDashoffset={414 - (414 * (latestRun?.readiness.score ?? gaugeScore)) / 100} />
+                            </svg>
+                            <div className="mood">
+                              <QutieMark mood="neutral" size={52} />
+                              <div className="score">{latestRun?.readiness.score ?? gaugeScore}</div>
+                              <div className="band" style={{ color: bandColor }}>
+                                {band.toUpperCase()}
+                              </div>
+                            </div>
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <ScoreRow label="Pass rate" value={`${latestRun?.summary.passRate ?? 0}%`} width={latestRun?.summary.passRate ?? 0} color="var(--outline)" />
+                            <ScoreRow label="Requirement coverage" value={`${latestRun?.coverage.percentage ?? coverage?.percentage ?? 0}%`} width={latestRun?.coverage.percentage ?? coverage?.percentage ?? 0} color="var(--outline)" />
+                            <ScoreRow label="Design token compliance" value={`${latestRun?.designCompliance ?? 0}%`} width={latestRun?.designCompliance ?? 0} color="var(--pass)" />
+                            <ScoreRow label="Open bug weight" value={bugWeightLabel} width={Math.max(bugWeight, 4)} color="var(--fail)" />
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -997,11 +1090,28 @@ export default function App() {
           <div className="modal-b">
             <div style={{ fontSize: 9, color: 'var(--t-muted)', marginBottom: 9 }}>Exact Jira payload QUTIE will send. Nothing is written until you confirm.</div>
             <div className="payload">{modalPayload}</div>
+            {activeBug && activeBug.status !== 'duplicate' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
+                <label style={{ fontSize: 9.5, color: 'var(--t-secondary)', fontWeight: 500 }}>Priority</label>
+                <select
+                  value={priorityOverride}
+                  onChange={(e) => setPriorityOverride(e.target.value)}
+                  style={{ width: 140 }}
+                >
+                  {['Blocker', 'Critical', 'Major', 'Minor', 'Trivial'].map((p) => (
+                    <option key={p} value={p}>{p}{p === activeBug.priority ? ' (suggested)' : ''}</option>
+                  ))}
+                </select>
+                <span style={{ fontSize: 8.8, color: 'var(--t-muted)' }}>Override before filing if you disagree with QUTIE's call</span>
+              </div>
+            )}
           </div>
           <div className="modal-f">
             <span className="gate">⚠ Confirmation required before any Jira write</span>
             <button className="btn btn-ghost" onClick={() => setModalOpen(false)}>Cancel</button>
-            <button className="btn btn-primary" onClick={confirmFile}>Confirm & file</button>
+            <button className="btn btn-primary" onClick={confirmFile} disabled={filing}>
+              {filing ? <><span className="spinner" /> Filing…</> : 'Confirm & file'}
+            </button>
           </div>
         </div>
       </div>

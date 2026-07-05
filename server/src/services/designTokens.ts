@@ -45,18 +45,10 @@ function colorsMatch(a: string, b: string): boolean {
 export async function checkDesignToken(
   page: import('playwright').Page,
   selector: string,
-  tokenName: string,
-  brokenMode?: boolean
+  tokenName: string
 ): Promise<{ pass: boolean; message: string }> {
   const tokens = loadDesignTokens();
   const expected = tokens.colors[tokenName] ?? '#14B8A6';
-
-  if (brokenMode && tokenName === '--shipped') {
-    return {
-      pass: false,
-      message: `Rendered fill #19C9A0, off-token by design (expected ${tokenName} ${expected})`,
-    };
-  }
 
   const actual = await page.evaluate((sel) => {
     const el = document.querySelector(sel);

@@ -13,9 +13,6 @@ npx playwright install chromium
 
 # Start API (:3001) and UI (:5173)
 npm run dev
-
-# Optional — include local demo target app on :4000
-npm run dev:demo
 ```
 
 Open **http://localhost:5173** for the QUTIE dashboard.
@@ -24,7 +21,7 @@ Open **http://localhost:5173** for the QUTIE dashboard.
 
 1. **Add requirements** — Upload an FRD or BRD (`.pdf`, `.docx`, `.md`, `.txt`), paste requirement text directly, fetch a Confluence page, or connect Jira with a JQL query. Sources are additive — you can combine an FRD upload with Jira tickets. No bundled specs are included; you must provide your own.
 2. **Set run instructions** (optional) — Tell QUTIE *how* to behave for this session (e.g. focus on login flow, test against staging, prioritize design token compliance). Instructions guide test generation and execution; they are not treated as requirements.
-3. **Set target URL** — Point at your build (e.g. `http://localhost:4000` for the local demo app, or your staging URL like `https://omni-dev.quloi.com/login`). Production hosts (`app.quloi.com`, `*.quloi.com`) are blocked by default; dev/staging subdomains (`omni-dev`, `*-dev`, `staging.*`) are allowed automatically.
+3. **Set target URL** — Point at your build (e.g. `https://omni-dev.quloi.com/login`). Production hosts (`app.quloi.com`, `*.quloi.com`) are blocked by default; dev/staging subdomains (`omni-dev`, `*-dev`, `staging.*`) are allowed automatically.
 4. **Enter credentials** (if your app has a login form) — QUTIE attempts common email/password selectors before running tests. Optionally set **Login URL** if sign-in lives on a different path (e.g. `/login`). See [Login configuration](#login-configuration) below.
 5. **Generate test cases** — QUTIE parses your requirements and maps test cases with coverage %.
 6. **Run suite** — Playwright executes tests against the target app.
@@ -37,7 +34,6 @@ Open **http://localhost:5173** for the QUTIE dashboard.
 |--------|------|-------------|
 | API server | `server/` | Express + SQLite + Playwright |
 | Dashboard UI | `client/` | React + Vite |
-| Demo target app | `demo-app/` | Local test target on :4000 (optional) |
 
 ## AI test generation
 
@@ -111,18 +107,6 @@ QUTIE logs in **once per run** before executing tests (session persists in the s
 **Works well with:** standard HTML forms, separate `/login` pages, multi-step email-then-password, cookie banners.
 
 **Does not support:** Google/Microsoft SSO, CAPTCHA, magic-link email, or hardware MFA. For those, use a staging environment with a direct username/password login or a test bypass URL.
-
-**Demo app** (`http://localhost:4000`): use `qa.buyer@quloi.test` / `qutietestpass` — login form is on `/` with `#username`, `#password`, `#login-btn`.
-
-## Demo target app
-
-The app on `:4000` is an optional local test target — it is not auto-wired into QUTIE. Point the target URL at it manually if you want to test against it.
-
-Use `?broken=1` on the demo URL to activate planted bugs for manual testing:
-
-- **Design token violation** — Shipped pill uses wrong color
-- **Empty destination accepted** — Booking form skips validation
-- **IncoTerm filter** — Filter does not constrain row selection
 
 ## FRD coverage (MVP)
 

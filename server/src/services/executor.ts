@@ -236,7 +236,6 @@ interface ExecuteOptions {
   testCases: TestCase[];
   retryCount?: number;
   verboseEvidence?: boolean;
-  brokenMode?: boolean;
   instructions?: string;
   runId?: string;
   progress?: ProgressReporter;
@@ -621,6 +620,47 @@ async function evaluateLoginOutcome(
   return { success: false, error: 'Could not confirm login success — form may still be present or SSO required' };
 }
 
+/** Re-establish the shared session when a prior test (e.g. a logout case) ended it. */
+async function ensureAuthenticated(
+  page: PlaywrightPage,
+  targetUrl: string,
+  creds: { username: string; password: string },
+  loginUrl: string | undefined,
+  debug: string[]
+): Promise<void> {
+  let onLoginUrl = false;
+  try {
+    onLoginUrl = LOGIN_URL_HINTS.test(new URL(page.url()).pathname);
+  } catch {
+    return; // about:blank or similar — nothing to restore yet
+  }
+
+  if (!onLoginUrl) {
+    if (await hasLogoutIndicator(page)) return; // still signed in
+    const form = await detectLoginForm(page);
+    if (!form.passwordField) return; // no login screen in sight — assume session is fine
+  }
+
+  debug.push('Session lost after previous test — re-authenticating');
+  await attemptLogin(page, targetUrl, creds, { loginUrl }).catch(() => {});
+}
+
+/** SPA logins can redirect several seconds after submit — poll for a definitive outcome. */
+async function waitForLoginOutcome(
+  page: PlaywrightPage,
+  startUrl: string,
+  debug: string[]
+): Promise<Pick<LoginAttemptResult, 'success' | 'error'>> {
+  const deadline = Date.now() + 15000;
+  let outcome = await evaluateLoginOutcome(page, startUrl, []);
+  while (!outcome.success && Date.now() < deadline) {
+    if (outcome.error?.startsWith('Login failed:')) break; // explicit error banner — definitive
+    await page.waitForTimeout(1000);
+    outcome = await evaluateLoginOutcome(page, startUrl, []);
+  }
+  return evaluateLoginOutcome(page, startUrl, debug);
+}
+
 async function fillAndSubmitLogin(
   page: PlaywrightPage,
   creds: { username: string; password: string },
@@ -835,7 +875,7 @@ export async function attemptLogin(
     if (ev) loginEvidence.push(ev);
   }
 
-  const outcome = await evaluateLoginOutcome(page, resolvedLoginUrl, debug);
+  const outcome = await waitForLoginOutcome(page, resolvedLoginUrl, debug);
   if (evidence) {
     const ev = await recordEvidence(
       evidence,
@@ -859,7 +899,6 @@ export async function executeTestSuite(options: ExecuteOptions): Promise<Execute
     password,
     testCases,
     retryCount = 1,
-    brokenMode,
     runId = `run-${Date.now()}`,
     verboseEvidence = true,
     progress,
@@ -886,6 +925,7 @@ export async function executeTestSuite(options: ExecuteOptions): Promise<Execute
     viewport: { width: 1280, height: 800 },
     ignoreHTTPSErrors,
   });
+  context.setDefaultTimeout(15000); // fail blocked steps in seconds, not Playwright's 30s default
   const page = await context.newPage();
   const secrets = [password, username];
   const results: TestResult[] = [];
@@ -945,23 +985,46 @@ export async function executeTestSuite(options: ExecuteOptions): Promise<Execute
           testCaseTitle: tc.title,
         });
       }
-      const result = await runSingleTest(
-        page,
-        tc,
-        appBaseUrl,
-        { username, password },
-        secrets,
-        retryCount,
-        brokenMode,
-        authNote,
-        evidenceCtx
-      );
-      result.runId = runId;
-      results.push(result);
 
-      if (tc.type === 'Design') {
-        tokenChecks++;
-        if (result.status === 'pass') tokenPasses++;
+      // Login-page tests must start logged out: the shared session would redirect
+      // /login to the app. Run them in a fresh incognito context instead.
+      const firstStep = tc.steps[0];
+      const needsFreshSession =
+        login.success &&
+        firstStep?.action === 'navigate' &&
+        !!firstStep.target &&
+        LOGIN_URL_HINTS.test(firstStep.target.startsWith('http') ? new URL(firstStep.target).pathname : firstStep.target);
+
+      let testPage = page;
+      let freshContext: import('playwright').BrowserContext | undefined;
+      if (needsFreshSession) {
+        freshContext = await browser.newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors });
+        freshContext.setDefaultTimeout(15000);
+        testPage = await freshContext.newPage();
+      } else if (login.success && (username || password)) {
+        await ensureAuthenticated(page, normalizedUrl, { username, password }, loginUrl, login.debug);
+      }
+
+      try {
+        const result = await runSingleTest(
+          testPage,
+          tc,
+          appBaseUrl,
+          { username, password },
+          secrets,
+          retryCount,
+          authNote,
+          evidenceCtx
+        );
+        result.runId = runId;
+        results.push(result);
+
+        if (tc.type === 'Design') {
+          tokenChecks++;
+          if (result.status === 'pass') tokenPasses++;
+        }
+      } finally {
+        await freshContext?.close().catch(() => {});
       }
     }
   } finally {
@@ -986,7 +1049,6 @@ async function runSingleTest(
   creds: { username: string; password: string },
   secrets: string[],
   retryCount: number,
-  brokenMode?: boolean,
   authNote?: string,
   evidenceCtx?: EvidenceContext
 ): Promise<TestResult> {
@@ -1006,7 +1068,7 @@ async function runSingleTest(
     try {
       for (const step of tc.steps) {
         const description = describeStep(step, baseUrl);
-        const ok = await executeStep(page, step, baseUrl, creds, tc, brokenMode);
+        const ok = await executeStep(page, step, baseUrl, creds, tc);
         const stepStatus: 'pass' | 'fail' = ok.success ? 'pass' : 'fail';
 
         if (evidenceCtx?.verbose) {
@@ -1101,8 +1163,7 @@ async function executeStep(
   step: TestStep,
   baseUrl: string,
   creds: { username: string; password: string },
-  tc: TestCase,
-  brokenMode?: boolean
+  tc: TestCase
 ): Promise<{ success: boolean; error?: string; blocked?: boolean }> {
   const resolveValue = (v?: string) =>
     v?.replace('{{username}}', creds.username).replace('{{password}}', creds.password) ?? '';
@@ -1135,9 +1196,13 @@ async function executeStep(
     }
     case 'fill': {
       const el = page.locator(step.target!);
-      const count = await el.count();
-      if (count === 0) return { success: false, error: `Element not found: ${step.target}`, blocked: true };
-      await el.first().fill(resolveValue(step.value));
+      try {
+        await el.first().waitFor({ state: 'visible', timeout: 10000 });
+      } catch {
+        return { success: false, error: `Element not found: ${step.target}`, blocked: true };
+      }
+      // safeFill handles readonly/disabled inputs (common anti-autofill pattern on SPA logins)
+      await safeFill(el.first(), resolveValue(step.value), []);
       return { success: true };
     }
     case 'click': {
@@ -1154,33 +1219,41 @@ async function executeStep(
       return { success: true };
     }
     case 'assert-page-contains': {
+      // Auto-wait: SPAs render/redirect asynchronously, so poll before declaring failure
       const patterns = (step.value ?? '').split('|').map((p) => p.trim()).filter(Boolean);
       if (!patterns.length) return { success: true };
-      const bodyText = ((await page.locator('body').textContent()) ?? '').toLowerCase();
-      const matched = patterns.some((p) => bodyText.includes(p.toLowerCase()));
-      if (!matched) {
-        return {
-          success: false,
-          error: `Page content does not reflect requirement intent (expected one of: ${patterns.join(', ')})`,
-        };
+      const deadline = Date.now() + 10000;
+      for (;;) {
+        const bodyText = ((await page.locator('body').textContent().catch(() => '')) ?? '').toLowerCase();
+        if (patterns.some((p) => bodyText.includes(p.toLowerCase()))) return { success: true };
+        if (Date.now() >= deadline) break;
+        await page.waitForTimeout(500);
       }
-      return { success: true };
+      return {
+        success: false,
+        error: `Page content does not reflect requirement intent (expected one of: ${patterns.join(', ')})`,
+      };
     }
     case 'assert-visible': {
-      const el = page.locator(step.target!);
-      if ((await el.count()) === 0) return { success: false, error: `Expected visible: ${step.target}` };
-      const visible = await el.first().isVisible();
-      if (!visible) return { success: false, error: `Not visible: ${step.target}` };
-      return { success: true };
+      try {
+        await page.locator(step.target!).first().waitFor({ state: 'visible', timeout: 10000 });
+        return { success: true };
+      } catch {
+        return { success: false, error: `Expected visible: ${step.target}` };
+      }
     }
     case 'assert-text': {
       const el = page.locator(step.target!);
-      if ((await el.count()) === 0) return { success: false, error: `Element not found: ${step.target}` };
-      const texts = await el.allTextContents();
-      if (!texts.some((t) => t.includes(step.value!))) {
-        return { success: false, error: `Expected "${step.value}", got "${texts.map((t) => t.trim()).join(' | ').slice(0, 120)}"` };
+      const deadline = Date.now() + 10000;
+      for (;;) {
+        const texts = await el.allTextContents().catch(() => [] as string[]);
+        if (texts.some((t) => t.includes(step.value!))) return { success: true };
+        if (Date.now() >= deadline) {
+          if (!texts.length) return { success: false, error: `Element not found: ${step.target}` };
+          return { success: false, error: `Expected "${step.value}", got "${texts.map((t) => t.trim()).join(' | ').slice(0, 120)}"` };
+        }
+        await page.waitForTimeout(500);
       }
-      return { success: true };
     }
     case 'assert-count': {
       const el = page.locator(step.target!);
@@ -1199,7 +1272,7 @@ async function executeStep(
     case 'check-token': {
       const el = page.locator(step.target!);
       if ((await el.count()) === 0) return { success: false, error: `Token target not found: ${step.target}` };
-      const check = await checkDesignToken(page, step.target!, step.value ?? '--shipped', brokenMode);
+      const check = await checkDesignToken(page, step.target!, step.value ?? '--shipped');
       if (!check.pass) {
         return { success: false, error: check.message };
       }

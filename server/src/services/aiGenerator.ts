@@ -75,11 +75,12 @@ Step actions and their exact runtime semantics:
 - check-token: target is a CSS selector for a status pill/badge; value is a design token name (default "--shipped"). Use only for design-token compliance requirements.
 
 Rules:
-1. The runner logs in ONCE before the suite with the supplied credentials. Do not write login steps unless the requirement is specifically about authentication.
+1. Session handling: the runner logs in once before the suite. Any test case whose FIRST navigate targets a login path (/login, /signin, ...) automatically runs in a fresh logged-out browser session, so the login form WILL be present — use this for authentication requirements (form rendering, invalid credentials, blank password, valid login). All other test cases run in the authenticated session. If a test logs the user out, the runner re-authenticates before the next test.
 2. Generate 1-3 test cases per requirement: always a positive case; add negative/edge/design cases only where the requirement implies them.
 3. When page context (real DOM digests) is provided, use selectors and paths that actually exist in it. Prefer IDs and names over text matching. Do not invent selectors that are not plausible for the described app.
 4. When no page context is provided, use robust generic selectors (semantic elements, roles, broad comma-separated alternatives) and assert-page-contains for intent checks.
 5. Prefer shallow, reliable assertions over deep multi-page flows the runner cannot sustain. Each test case should have 2-6 steps.
+5b. Actions like Logout, Profile, or Settings usually live inside an avatar/user menu in SPAs. If the page context does not show a directly visible button for them, first click the menu trigger (avatar, user name, or profile button visible in the page context), then click the action. If the page context gives no evidence of where such an action lives, prefer asserting its visible effects instead of guessing selectors.
 6. Keep titles short and prefixed with the case type, e.g. "[Negative] Booking rejects empty destination".
 7. preconditions and testData are short human-readable strings. expectedResult states the observable outcome.
 8. For steps where target or value is not applicable, use an empty string.`;

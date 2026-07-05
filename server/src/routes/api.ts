@@ -41,12 +41,9 @@ let sessionInstructions = getSessionState(INSTRUCTIONS_KEY);
 // FR-24: signature -> Jira key of the already-filed matching bug
 const filedSignatures = new Map<string, string>();
 
+// One-time cleanup of demo data that shipped in early builds. Keep this list
+// narrow — matching a real user upload here would silently delete it on boot.
 const LEGACY_BUNDLED_SOURCE_REFS = new Set([
-  'QUTIE_FRD_v1.md',
-  'Consolidation_BRD',
-  'Business Requirements Document (BRD).docx',
-  'HACK-3',
-  'HACK-8',
   'qutie-smoke-frd.md',
   'test-upload-brd.md',
 ]);
@@ -598,7 +595,7 @@ apiRouter.delete('/test-cases/:id', (req, res) => {
 
 apiRouter.post('/run', async (req, res) => {
   try {
-    const { targetUrl, loginUrl, username, password, testCaseIds, retryCount, brokenMode, instructions } = req.body;
+    const { targetUrl, loginUrl, username, password, testCaseIds, retryCount, instructions } = req.body;
     if (!targetUrl) return res.status(400).json({ error: 'targetUrl required' });
 
     const normalizedUrl = normalizeTargetUrl(targetUrl);
@@ -625,7 +622,6 @@ apiRouter.post('/run', async (req, res) => {
     const toRun = testCaseIds?.length ? cases.filter((tc) => testCaseIds.includes(tc.id)) : cases;
 
     const runId = uuidv4();
-    const broken = brokenMode ?? normalizedUrl.includes('broken=1');
     const loginStepEstimate = 4;
     const totalSteps = loginStepEstimate + toRun.reduce((sum, tc) => sum + (tc.steps?.length ?? 1), 0) + toRun.length;
 
@@ -660,7 +656,6 @@ apiRouter.post('/run', async (req, res) => {
           password: password ?? '',
           testCases: toRun,
           retryCount: retryCount ?? 1,
-          brokenMode: broken,
           instructions: runInstructions,
           runId,
           verboseEvidence: true,

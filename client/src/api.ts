@@ -89,12 +89,17 @@ export const api = {
       body: JSON.stringify(body),
     }),
   getTestCases: () => request<{ testCases: import('./types').TestCase[]; coverage: import('./types').Coverage }>('/test-cases'),
-  run: (body: { targetUrl: string; loginUrl?: string; username: string; password: string; brokenMode?: boolean; instructions?: string }) =>
+  deleteTestCase: (id: string) => request<{ ok: boolean }>(`/test-cases/${id}`, { method: 'DELETE' }),
+  run: (body: { targetUrl: string; loginUrl?: string; username: string; password: string; instructions?: string }) =>
     request<{ runId: string; status: string }>('/run', { method: 'POST', body: JSON.stringify(body) }),
   getRunProgress: (runId: string) => request<import('./types').RunProgress>(`/run/${runId}/progress`),
   getRun: (runId: string) => request<import('./types').TestRun>(`/run/${runId}`),
   getBugs: () => request<{ bugs: import('./types').BugReport[] }>('/bugs'),
   previewBug: (id: string) => request<{ payload: import('./types').JiraPayload; bug: import('./types').BugReport; duplicate: boolean }>(`/bugs/${id}/preview`, { method: 'POST' }),
-  fileBug: (id: string) => request<{ bug: import('./types').BugReport; filed: { key: string; mode: string }; payload: import('./types').JiraPayload }>(`/bugs/${id}/file`, { method: 'POST', body: '{}' }),
+  fileBug: (id: string, overrides: { priority?: string } = {}) =>
+    request<{ bug: import('./types').BugReport; filed: { key: string; mode: string }; payload: import('./types').JiraPayload }>(`/bugs/${id}/file`, {
+      method: 'POST',
+      body: JSON.stringify(overrides),
+    }),
   getDashboard: () => request<{ latest: import('./types').TestRun | null; trend: Array<{ label: string; passRate: number; current?: boolean }>; severityCounts: Record<string, number>; runs: number }>('/dashboard'),
 };

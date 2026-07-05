@@ -3,6 +3,7 @@ import { attemptLogin, checkProductionUrl, normalizeTargetUrl, resolveAppBaseUrl
 
 /** Compact digest of a rendered page, fed to the AI generator so it emits real selectors. */
 export interface PageDigest {
+  phase?: 'pre-login' | 'post-login';
   url: string;
   title: string;
   headings: string[];
@@ -126,6 +127,19 @@ export async function collectPageContext(
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors });
     const page = await context.newPage();
 
+    // Digest the entry page before authenticating — login-form selectors matter for auth tests
+    let preLoginDigest: PageDigest | undefined;
+    if (creds.username || creds.password) {
+      try {
+        await page.goto(normalized, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+        await page.waitForTimeout(1500);
+        preLoginDigest = { ...(await digestPage(page)), phase: 'pre-login' };
+      } catch {
+        /* pre-login digest is best-effort */
+      }
+    }
+
     const login = await attemptLogin(
       page,
       normalized,
@@ -134,11 +148,14 @@ export async function collectPageContext(
     );
 
     const appBaseUrl = resolveAppBaseUrl(normalized);
-    const pages: PageDigest[] = [await digestPage(page)];
+    const postLoginDigest: PageDigest = { ...(await digestPage(page)), phase: 'post-login' };
+    const pages: PageDigest[] = [];
+    if (preLoginDigest) pages.push(preLoginDigest);
+    pages.push(postLoginDigest);
 
     // Follow a couple of same-origin nav links for broader selector coverage
     const origin = new URL(appBaseUrl).origin;
-    const candidates = pages[0].links
+    const candidates = postLoginDigest.links
       .map((l) => {
         try {
           return new URL(l.href, `${origin}/`).href;
@@ -146,14 +163,14 @@ export async function collectPageContext(
           return null;
         }
       })
-      .filter((href): href is string => !!href && href.startsWith(origin) && href !== pages[0].url)
+      .filter((href): href is string => !!href && href.startsWith(origin) && href !== postLoginDigest.url)
       .slice(0, MAX_EXTRA_PAGES);
 
     for (const href of candidates) {
       try {
         await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 15000 });
         await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
-        pages.push(await digestPage(page));
+        pages.push({ ...(await digestPage(page)), phase: 'post-login' });
       } catch {
         /* skip unreachable pages */
       }
