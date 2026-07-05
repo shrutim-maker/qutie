@@ -996,6 +996,7 @@ async function runSingleTest(
   let isBlocked = false;
   let failingStep: number | undefined;
   let evidencePath: string | undefined;
+  let evidenceUrl: string | undefined;
   let actualResult: string | undefined;
   let attempts = 0;
   const stepEvidence: StepEvidence[] = [];
@@ -1036,6 +1037,7 @@ async function runSingleTest(
           await redactSensitiveFields(page);
           await page.screenshot({ path: shotPath, fullPage: false }).catch(() => {});
           evidencePath = shotPath;
+          evidenceUrl = `/evidence/${runId}/${tc.id}/step-${failingStep}-failure.png`;
           return false;
         }
       }
@@ -1051,6 +1053,7 @@ async function runSingleTest(
       await redactSensitiveFields(page);
       await page.screenshot({ path: shotPath, fullPage: false }).catch(() => {});
       evidencePath = shotPath;
+      evidenceUrl = `/evidence/${runId}/${tc.id}/step-failure.png`;
       return false;
     }
   };
@@ -1088,6 +1091,7 @@ async function runSingleTest(
     actualResult: withAuth,
     failingStep,
     evidencePath,
+    evidenceUrl,
     stepEvidence: stepEvidence.length ? stepEvidence : undefined,
   };
 }

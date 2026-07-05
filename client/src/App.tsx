@@ -64,6 +64,9 @@ export default function App() {
   const [confluenceBaseUrl, setConfluenceBaseUrl] = useState('');
   const [jiraOpen, setJiraOpen] = useState(false);
   const [jiraQuery, setJiraQuery] = useState('');
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const [pasteSourceType, setPasteSourceType] = useState<'frd' | 'brd'>('frd');
 
   const refreshRequirements = useCallback(async () => {
     try {
@@ -347,6 +350,18 @@ export default function App() {
     }
   };
 
+  const handlePasteIngest = async () => {
+    try {
+      const data = await api.ingestPaste(pasteText, pasteSourceType);
+      await refreshRequirements();
+      setGenStatus(`Ingested pasted ${pasteSourceType.toUpperCase()} — ${data.total} requirements total`);
+      setPasteOpen(false);
+      setPasteText('');
+    } catch (err) {
+      setGenStatus(err instanceof Error ? err.message : 'Paste ingest failed');
+    }
+  };
+
   const handleJiraIngest = async () => {
     try {
       const data = await api.ingestJira(jiraQuery || undefined);
@@ -463,11 +478,15 @@ export default function App() {
               <div className="source-row">
                 <div className="source-chip" style={{ borderStyle: 'dashed' }} onClick={() => frdInputRef.current?.click()}>
                   <span>+</span>
-                  <div><div>Upload FRD</div><div style={{ fontSize: 8.8, color: 'var(--t-label)' }}>.docx, .md, .txt</div></div>
+                  <div><div>Upload FRD</div><div style={{ fontSize: 8.8, color: 'var(--t-label)' }}>.pdf, .docx, .md, .txt</div></div>
                 </div>
                 <div className="source-chip" style={{ borderStyle: 'dashed' }} onClick={() => brdInputRef.current?.click()}>
                   <span>+</span>
-                  <div><div>Upload BRD</div><div style={{ fontSize: 8.8, color: 'var(--t-label)' }}>.docx, .md, .txt</div></div>
+                  <div><div>Upload BRD</div><div style={{ fontSize: 8.8, color: 'var(--t-label)' }}>.pdf, .docx, .md, .txt</div></div>
+                </div>
+                <div className="source-chip" style={{ borderStyle: 'dashed' }} onClick={() => setPasteOpen(true)}>
+                  <span>+</span>
+                  <div><div>Paste text</div><div style={{ fontSize: 8.8, color: 'var(--t-label)' }}>FRD or BRD as plain text</div></div>
                 </div>
                 <div className="source-chip" style={{ borderStyle: 'dashed' }} onClick={() => setConfluenceOpen(true)}>
                   <span>+</span>
@@ -762,7 +781,13 @@ export default function App() {
                   </div>
                 </div>
                 <div className="bug-right">
-                  <div className="shot fail" style={{ width: '100%', height: 56, marginBottom: 10 }}><span className="redact">redacted</span></div>
+                  {b.evidenceUrl ? (
+                    <a href={b.evidenceUrl} target="_blank" rel="noopener noreferrer" style={{ width: '100%' }}>
+                      <img src={b.evidenceUrl} alt="Failure screenshot (redacted)" style={{ width: '100%', height: 56, objectFit: 'cover', borderRadius: 6, marginBottom: 10, border: '1px solid var(--outline)' }} />
+                    </a>
+                  ) : (
+                    <div className="shot fail" style={{ width: '100%', height: 56, marginBottom: 10 }}><span className="redact">no screenshot</span></div>
+                  )}
                   {b.status === 'filed' || b.status === 'linked' ? (
                     <span className="jira-key" style={{ color: b.status === 'linked' ? 'var(--warn)' : undefined }}>
                       {b.status === 'linked' ? `⚡ Linked to ${b.jiraKey}` : `✓ Filed ${b.jiraKey}`}
@@ -890,6 +915,36 @@ export default function App() {
           <div className="modal-f">
             <button className="btn btn-ghost" onClick={() => setConfluenceOpen(false)}>Cancel</button>
             <button className="btn btn-primary" onClick={handleConfluenceIngest}>Fetch page</button>
+          </div>
+        </div>
+      </div>
+
+      {/* PASTE TEXT MODAL */}
+      <div className={`overlay ${pasteOpen ? 'on' : ''}`}>
+        <div className="modal">
+          <div className="modal-h"><h3>Paste requirements</h3><button className="btn btn-ghost" onClick={() => setPasteOpen(false)}>✕</button></div>
+          <div className="modal-b">
+            <div style={{ fontSize: 9, color: 'var(--t-muted)', marginBottom: 9 }}>
+              Paste FRD/BRD text. QUTIE extracts FR-/BRD-numbered requirements, or falls back to numbered sections.
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+              {(['frd', 'brd'] as const).map((st) => (
+                <button key={st} className={`btn ${pasteSourceType === st ? 'btn-primary' : 'btn-ghost'}`} style={{ fontSize: 9 }} onClick={() => setPasteSourceType(st)}>
+                  {st.toUpperCase()}
+                </button>
+              ))}
+            </div>
+            <textarea
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              rows={10}
+              placeholder="FR-1 The system shall ..."
+              style={{ width: '100%', fontFamily: 'inherit', fontSize: 11, padding: 10, borderRadius: 8, border: '1px solid var(--outline)', background: 'var(--surface)', color: 'var(--t-primary)' }}
+            />
+          </div>
+          <div className="modal-f">
+            <button className="btn btn-ghost" onClick={() => setPasteOpen(false)}>Cancel</button>
+            <button className="btn btn-primary" disabled={pasteText.trim().length < 20} onClick={handlePasteIngest}>Ingest text</button>
           </div>
         </div>
       </div>

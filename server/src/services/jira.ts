@@ -26,25 +26,58 @@ export function getJiraConfig(): JiraConfig | null {
   const apiToken = process.env.JIRA_API_TOKEN;
   if (!email || !apiToken) return null;
   return {
-    baseUrl: process.env.JIRA_BASE_URL ?? 'https://quloi-testing-tool.atlassian.net',
+    // FR-22: MVP files bugs to the HACK sandbox project on quloi.atlassian.net
+    baseUrl: process.env.JIRA_BASE_URL ?? 'https://quloi.atlassian.net',
     email,
     apiToken,
-    projectKey: process.env.JIRA_PROJECT_KEY ?? 'QUTIE',
+    projectKey: process.env.JIRA_PROJECT_KEY ?? 'HACK',
   };
 }
 
 export function buildJiraPayload(bug: BugReport, attachmentName?: string): JiraPayload {
-  const projectKey = getJiraConfig()?.projectKey ?? process.env.JIRA_PROJECT_KEY ?? 'QUTIE';
+  const projectKey = getJiraConfig()?.projectKey ?? process.env.JIRA_PROJECT_KEY ?? 'HACK';
+  // FR-21: file the full structured report (repro steps, expected vs actual, environment, links)
+  const description = [
+    bug.reportBody,
+    ``,
+    `*Test case:* ${bug.testCaseId}`,
+    `*Requirement:* ${bug.requirementId}`,
+  ].join('\n');
   return {
     project: { key: projectKey },
     issuetype: 'Bug',
     summary: bug.title,
     priority: bug.priority,
     labels: ['qutie', bug.severityLabel.toLowerCase(), 'auto-qa'],
-    description: `Expected: ${bug.expected ?? 'N/A'} | Actual: ${bug.actual ?? 'N/A'}`,
+    description,
     customfield_req: bug.requirementId,
     attachments: attachmentName ? [attachmentName] : [],
   };
+}
+
+function toAdfDoc(text: string) {
+  const paragraphs = text.split('\n').map((line) => ({
+    type: 'paragraph',
+    content: line ? [{ type: 'text', text: line }] : [],
+  }));
+  return { type: 'doc', version: 1, content: paragraphs };
+}
+
+/** FR-24: comment on an existing open issue instead of creating a duplicate. */
+export async function addJiraComment(issueKey: string, text: string): Promise<boolean> {
+  const config = getJiraConfig();
+  if (!config) return false;
+  const auth = Buffer.from(`${config.email}:${config.apiToken}`).toString('base64');
+  const res = await fetch(`${config.baseUrl}/rest/api/3/issue/${issueKey}/comment`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${auth}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({ body: toAdfDoc(text) }),
+  });
+  return res.ok;
 }
 
 export async function fileBugToJira(
@@ -56,8 +89,15 @@ export async function fileBugToJira(
   const config = getJiraConfig();
 
   if (bug.status === 'duplicate') {
-    audit(actor, 'jira_link', { bugId: bug.id, existingKey: bug.jiraKey });
-    return { key: bug.jiraKey ?? 'EXISTING', mode: 'linked' };
+    const existingKey = bug.jiraKey;
+    if (config && existingKey && !existingKey.startsWith('MOCK')) {
+      await addJiraComment(
+        existingKey,
+        `QUTIE detected this failure again.\n${payload.description}`
+      ).catch(() => false);
+    }
+    audit(actor, 'jira_link', { bugId: bug.id, existingKey });
+    return { key: existingKey ?? 'EXISTING', mode: 'linked' };
   }
 
   if (!config) {
@@ -67,39 +107,41 @@ export async function fileBugToJira(
   }
 
   const auth = Buffer.from(`${config.email}:${config.apiToken}`).toString('base64');
-  const body = {
+  const buildBody = (includePriority: boolean) => ({
     fields: {
       project: payload.project,
       issuetype: { name: payload.issuetype },
       summary: payload.summary,
-      priority: { name: payload.priority },
+      ...(includePriority ? { priority: { name: payload.priority } } : {}),
       labels: payload.labels,
-      description: {
-        type: 'doc',
-        version: 1,
-        content: [
-          {
-            type: 'paragraph',
-            content: [{ type: 'text', text: payload.description }],
-          },
-        ],
-      },
+      description: toAdfDoc(payload.description),
     },
-  };
-
-  const res = await fetch(`${config.baseUrl}/rest/api/3/issue`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Basic ${auth}`,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: JSON.stringify(body),
   });
+
+  const createIssue = (includePriority: boolean) =>
+    fetch(`${config.baseUrl}/rest/api/3/issue`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${auth}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(buildBody(includePriority)),
+    });
+
+  let res = await createIssue(true);
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Jira API error: ${res.status} ${err}`);
+    // Retry without priority when the Jira project uses a different priority scheme
+    if (/priority/i.test(err)) {
+      res = await createIssue(false);
+      if (!res.ok) {
+        throw new Error(`Jira API error: ${res.status} ${await res.text()}`);
+      }
+    } else {
+      throw new Error(`Jira API error: ${res.status} ${err}`);
+    }
   }
 
   const data = (await res.json()) as { key: string };

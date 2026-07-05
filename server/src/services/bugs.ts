@@ -2,7 +2,7 @@ import type { TestCase, TestResult, BugReport } from '../types.js';
 
 const SEVERITY_MAP: Record<string, { label: string; jira: string }> = {
   functional: { label: 'Critical', jira: 'Critical' },
-  blocking: { label: 'Critical', jira: 'Critical' },
+  blocking: { label: 'Critical', jira: 'Blocker' },
   data: { label: 'Major', jira: 'Major' },
   cosmetic: { label: 'Minor', jira: 'Minor' },
   design: { label: 'Design', jira: 'Minor' },
@@ -16,15 +16,19 @@ function inferSeverity(tc: TestCase, result: TestResult): BugReport['severity'] 
   return 'functional';
 }
 
+/** FR-28/FR-29: priority from severity + flow criticality + reproducibility, mapped to the full Jira scale. */
 function computePriority(severity: BugReport['severity'], _requirementId: string, reproducible: boolean): string {
   const flowWeight = 5;
   let score = flowWeight;
-  if (severity === 'blocking' || severity === 'functional') score += 5;
+  if (severity === 'blocking') score += 8;
+  else if (severity === 'functional') score += 5;
+  else if (severity === 'data') score += 4;
   if (severity === 'design') score += 1;
   if (!reproducible) score -= 2;
 
-  if (score >= 12) return 'Critical';
-  if (score >= 9) return 'Major';
+  if (score >= 13) return 'Blocker';
+  if (score >= 10) return 'Critical';
+  if (score >= 8) return 'Major';
   if (score >= 6) return 'Minor';
   return 'Trivial';
 }
@@ -50,6 +54,7 @@ export function generateBugReports(
     const priority = computePriority(severity, tc.requirementId, true);
     const signature = buildSignature(tc, result);
 
+    const failEvidence = result.stepEvidence?.filter((ev) => ev.status === 'fail');
     bugs.push({
       id: `bug-${result.id}`,
       resultId: result.id,
@@ -64,6 +69,10 @@ export function generateBugReports(
       requirementId: tc.requirementId,
       expected: tc.expectedResult,
       actual: result.actualResult,
+      evidenceUrl:
+        result.evidenceUrl ??
+        failEvidence?.[failEvidence.length - 1]?.screenshotUrl ??
+        result.stepEvidence?.[result.stepEvidence.length - 1]?.screenshotUrl,
     });
   }
 
@@ -84,12 +93,16 @@ function buildReportBody(tc: TestCase, result: TestResult, environment: string):
   ].join('\n');
 }
 
-export function deduplicateBugs(bugs: BugReport[], existingSignatures: Set<string>): BugReport[] {
+/**
+ * FR-24: mark a bug as a duplicate only when a matching bug was already filed to Jira,
+ * carrying the real issue key so QUTIE can link/comment instead of re-creating.
+ */
+export function deduplicateBugs(bugs: BugReport[], filedSignatures: Map<string, string>): BugReport[] {
   return bugs.map((bug) => {
-    if (existingSignatures.has(bug.signature)) {
-      return { ...bug, status: 'duplicate', jiraKey: bug.jiraKey ?? 'existing-issue' };
+    const existingKey = filedSignatures.get(bug.signature);
+    if (existingKey) {
+      return { ...bug, status: 'duplicate', jiraKey: existingKey };
     }
-    existingSignatures.add(bug.signature);
     return bug;
   });
 }
@@ -125,7 +138,8 @@ export function computeReadinessScore(inputs: ReadinessInputs): {
 export function computeBugWeight(bugs: BugReport[]): number {
   let weight = 0;
   for (const b of bugs.filter((x) => x.status !== 'duplicate')) {
-    if (b.priority === 'Critical') weight += 35;
+    if (b.priority === 'Blocker') weight += 45;
+    else if (b.priority === 'Critical') weight += 35;
     else if (b.priority === 'Major') weight += 20;
     else if (b.severity === 'design') weight += 10;
     else weight += 5;

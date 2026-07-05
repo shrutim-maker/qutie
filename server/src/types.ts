@@ -44,6 +44,7 @@ export interface TestResult {
   actualResult?: string;
   failingStep?: number;
   evidencePath?: string;
+  evidenceUrl?: string;
   stepEvidence?: StepEvidence[];
 }
 
@@ -62,6 +63,7 @@ export interface BugReport {
   requirementId: string;
   expected?: string;
   actual?: string;
+  evidenceUrl?: string;
 }
 
 export interface RunSummary {

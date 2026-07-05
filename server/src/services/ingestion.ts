@@ -1,6 +1,11 @@
 import mammoth from 'mammoth';
 import path from 'path';
+import { createRequire } from 'module';
 import type { Requirement } from '../types.js';
+
+// pdf-parse is CJS-only; import the lib entry directly to avoid its debug-mode side effects
+const require = createRequire(import.meta.url);
+const pdfParse = require('pdf-parse/lib/pdf-parse.js') as (buffer: Buffer) => Promise<{ text: string }>;
 
 const AMBIGUOUS_PATTERNS = [
   /\bshould be (?:fast|good|nice|user.?friendly)\b/i,
@@ -102,6 +107,9 @@ export async function parseDocument(
   if (ext === '.docx') {
     const result = await mammoth.extractRawText({ buffer });
     text = result.value;
+  } else if (ext === '.pdf') {
+    const result = await pdfParse(buffer);
+    text = result.text;
   } else if (ext === '.md' || ext === '.txt') {
     text = buffer.toString('utf-8');
   } else {
@@ -113,6 +121,15 @@ export async function parseDocument(
 
 export function parseConfluenceContent(text: string, sourceRef: string): Requirement[] {
   return extractFrRequirements(text, 'confluence', sourceRef);
+}
+
+/** FR-1: accept an FRD/BRD as pasted text. */
+export function parsePastedText(
+  text: string,
+  sourceType: 'frd' | 'brd' = 'frd',
+  sourceRef = 'Pasted text'
+): Requirement[] {
+  return extractFrRequirements(text, sourceType, sourceRef);
 }
 
 export function parseJiraIssues(

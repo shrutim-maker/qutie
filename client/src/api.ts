@@ -55,6 +55,11 @@ export const api = {
       return data;
     });
   },
+  ingestPaste: (text: string, sourceType: 'frd' | 'brd', sourceRef?: string) =>
+    request<{ added: number; total: number; sources: RequirementSource[] }>('/ingest/paste', {
+      method: 'POST',
+      body: JSON.stringify({ text, sourceType, sourceRef }),
+    }),
   ingestConfluence: (body: ConfluenceIngestBody) =>
     request<{ requirements: import('./types').Requirement[]; total: number; page: { id: string; title: string; webUrl: string } }>(
       '/ingest/confluence',

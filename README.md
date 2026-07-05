@@ -22,7 +22,7 @@ Open **http://localhost:5173** for the QUTIE dashboard.
 
 ## Getting started
 
-1. **Add requirements** — Upload an FRD or BRD (`.docx`, `.md`, `.txt`), fetch a Confluence page, or connect Jira with a JQL query. No bundled specs are included; you must provide your own.
+1. **Add requirements** — Upload an FRD or BRD (`.pdf`, `.docx`, `.md`, `.txt`), paste requirement text directly, fetch a Confluence page, or connect Jira with a JQL query. Sources are additive — you can combine an FRD upload with Jira tickets. No bundled specs are included; you must provide your own.
 2. **Set run instructions** (optional) — Tell QUTIE *how* to behave for this session (e.g. focus on login flow, test against staging, prioritize design token compliance). Instructions guide test generation and execution; they are not treated as requirements.
 3. **Set target URL** — Point at your build (e.g. `http://localhost:4000` for the local demo app, or your staging URL like `https://omni-dev.quloi.com/login`). Production hosts (`app.quloi.com`, `*.quloi.com`) are blocked by default; dev/staging subdomains (`omni-dev`, `*-dev`, `staging.*`) are allowed automatically.
 4. **Enter credentials** (if your app has a login form) — QUTIE attempts common email/password selectors before running tests. Optionally set **Login URL** if sign-in lives on a different path (e.g. `/login`). See [Login configuration](#login-configuration) below.
@@ -48,11 +48,12 @@ ALLOW_PRODUCTION_URL=true
 # Optional — ignore TLS certificate errors on staging/self-signed hosts
 IGNORE_HTTPS_ERRORS=true
 
-# Optional — without these, Jira filing runs in mock mode (no real API writes)
+# Optional — without these, Jira filing runs in mock mode (no real API writes).
+# Defaults to the HACK sandbox project on quloi.atlassian.net (FR-22).
 JIRA_EMAIL=your@email.com
 JIRA_API_TOKEN=your-token
-JIRA_BASE_URL=https://your-org.atlassian.net
-JIRA_PROJECT_KEY=YOUR_PROJECT
+JIRA_BASE_URL=https://quloi.atlassian.net
+JIRA_PROJECT_KEY=HACK
 
 # Optional — Confluence requirement ingestion (falls back to JIRA_EMAIL / JIRA_API_TOKEN)
 CONFLUENCE_BASE_URL=https://your-org.atlassian.net

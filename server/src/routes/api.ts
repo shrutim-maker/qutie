@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import { db, audit, getSessionState, setSessionState } from '../db.js';
-import { parseDocument, parseJiraIssues } from '../services/ingestion.js';
+import { parseDocument, parseJiraIssues, parsePastedText } from '../services/ingestion.js';
 import { generateTestCases, computeCoverage } from '../services/testGenerator.js';
 import { executeTestSuite, summarizeResults, checkProductionUrl, normalizeTargetUrl } from '../services/executor.js';
 import type { ProgressReporter } from '../services/executor.js';
@@ -22,7 +22,7 @@ import {
   fetchConfluencePageByTitle,
   ingestConfluencePage,
 } from '../services/confluence.js';
-import type { Requirement, TestCase, TestResult, BugReport } from '../types.js';
+import type { Requirement, TestCase, TestResult, BugReport, TestStep } from '../types.js';
 
 const upload = multer({ storage: multer.memoryStorage() });
 export const apiRouter = Router();
@@ -36,7 +36,8 @@ let sessionResults: TestResult[] = [];
 let sessionBugs: BugReport[] = [];
 let sessionRuns: Array<Record<string, unknown>> = [];
 let sessionInstructions = getSessionState(INSTRUCTIONS_KEY);
-const existingBugSignatures = new Set<string>();
+// FR-24: signature -> Jira key of the already-filed matching bug
+const filedSignatures = new Map<string, string>();
 
 const LEGACY_BUNDLED_SOURCE_REFS = new Set([
   'QUTIE_FRD_v1.md',
@@ -85,11 +86,11 @@ function purgeLegacyPasteRequirements() {
   deleteRequirementsByIds(pasteIds);
 }
 
+/** Remove only genuinely orphaned rows — run history must survive restarts (FR-36). */
 function purgeOrphanedRunData() {
-  db.prepare('DELETE FROM bugs').run();
-  db.prepare('DELETE FROM results').run();
-  db.prepare('DELETE FROM test_runs').run();
   db.prepare('DELETE FROM test_cases WHERE requirement_id NOT IN (SELECT id FROM requirements)').run();
+  db.prepare('DELETE FROM results WHERE test_case_id NOT IN (SELECT id FROM test_cases)').run();
+  db.prepare('DELETE FROM bugs WHERE result_id NOT IN (SELECT id FROM results)').run();
 }
 
 function purgeStaleDemoData() {
@@ -99,7 +100,7 @@ function purgeStaleDemoData() {
   sessionRuns = [];
   sessionResults = [];
   sessionBugs = [];
-  existingBugSignatures.clear();
+  filedSignatures.clear();
 }
 
 function purgeLegacyBundledRequirements() {
@@ -215,26 +216,82 @@ function loadTestCasesFromDb() {
     }));
 }
 
-loadRequirementsFromDb();
+function loadRunsFromDb() {
+  const rows = db
+    .prepare('SELECT payload FROM test_runs WHERE payload IS NOT NULL ORDER BY created_at DESC LIMIT 20')
+    .all() as Array<{ payload: string }>;
 
-function replaceRequirements(reqs: Requirement[]) {
-  clearAllRequirements();
-  sessionRequirements = reqs;
-  const stmt = db.prepare(
-    'INSERT INTO requirements (id, source_type, source_ref, text, testable, ambiguous) VALUES (?, ?, ?, ?, ?, ?)'
-  );
-  for (const r of reqs) {
-    stmt.run(r.id, r.sourceType, r.sourceRef, r.text, r.testable ? 1 : 0, r.ambiguous ? 1 : 0);
+  sessionRuns = rows
+    .map((r) => {
+      try {
+        return JSON.parse(r.payload) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    })
+    .filter((r): r is Record<string, unknown> => r !== null);
+
+  const latest = sessionRuns[0];
+  if (latest) {
+    sessionResults = (latest.results as TestResult[] | undefined) ?? [];
+    sessionBugs = (latest.bugs as BugReport[] | undefined) ?? [];
   }
+
+  for (const run of sessionRuns) {
+    for (const b of (run.bugs as BugReport[] | undefined) ?? []) {
+      if (b.jiraKey && (b.status === 'filed' || b.status === 'linked')) {
+        if (!filedSignatures.has(b.signature)) filedSignatures.set(b.signature, b.jiraKey);
+      }
+    }
+  }
+}
+
+loadRequirementsFromDb();
+loadRunsFromDb();
+
+/**
+ * FR-1/FR-2: sources are additive — re-ingesting a source replaces only that source,
+ * leaving other FRDs/BRDs/Jira/Confluence requirements intact.
+ */
+function upsertSourceRequirements(reqs: Requirement[]): Requirement[] {
+  if (!reqs.length) return [];
+
+  const groups = new Map<string, { sourceType: string; sourceRef: string }>();
+  for (const r of reqs) {
+    groups.set(`${r.sourceType}:${r.sourceRef}`, { sourceType: r.sourceType, sourceRef: r.sourceRef });
+  }
+  for (const g of groups.values()) {
+    deleteRequirementsBySource(g.sourceType, g.sourceRef);
+  }
+
+  const existingIds = new Set(sessionRequirements.map((r) => r.id));
+  const stmt = db.prepare(
+    'INSERT OR REPLACE INTO requirements (id, source_type, source_ref, text, testable, ambiguous) VALUES (?, ?, ?, ?, ?, ?)'
+  );
+
+  const inserted: Requirement[] = [];
+  for (const r of reqs) {
+    // FR-3: preserve original FR numbers; suffix only on cross-source ID collisions
+    let id = r.id;
+    let n = 2;
+    while (existingIds.has(id)) id = `${r.id}#${n++}`;
+    existingIds.add(id);
+
+    const req: Requirement = { ...r, id };
+    stmt.run(req.id, req.sourceType, req.sourceRef, req.text, req.testable ? 1 : 0, req.ambiguous ? 1 : 0);
+    sessionRequirements.push(req);
+    inserted.push(req);
+  }
+  return inserted;
 }
 
 function saveTestCases(cases: TestCase[]) {
   sessionTestCases = cases;
   const stmt = db.prepare(
-    'INSERT OR REPLACE INTO test_cases (id, requirement_id, title, type, preconditions, steps, test_data, expected_result, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT OR REPLACE INTO test_cases (id, requirement_id, title, type, preconditions, steps, test_data, expected_result, status, jira_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   );
   for (const tc of cases) {
-    stmt.run(tc.id, tc.requirementId, tc.title, tc.type, tc.preconditions, JSON.stringify(tc.steps), tc.testData, tc.expectedResult, tc.status);
+    stmt.run(tc.id, tc.requirementId, tc.title, tc.type, tc.preconditions, JSON.stringify(tc.steps), tc.testData, tc.expectedResult, tc.status, tc.jiraKey ?? null);
   }
 }
 
@@ -307,9 +364,9 @@ apiRouter.post('/ingest/upload', upload.single('file'), async (req, res) => {
     const sourceType = (req.body.sourceType as 'frd' | 'brd') ?? 'frd';
     const parsed = await parseDocument(req.file.buffer, req.file.originalname, sourceType);
     if (!parsed.length) return res.status(400).json({ error: 'No requirements found in uploaded file' });
-    replaceRequirements(parsed);
-    audit('user', 'ingest_upload', { filename: req.file.originalname, count: parsed.length });
-    res.json({ requirements: parsed, total: parsed.length });
+    const inserted = upsertSourceRequirements(parsed);
+    audit('user', 'ingest_upload', { filename: req.file.originalname, count: inserted.length });
+    res.json({ added: inserted.length, ...requirementsResponse() });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Ingest failed' });
   }
@@ -338,9 +395,13 @@ apiRouter.post('/ingest/confluence', async (req, res) => {
       return res.status(400).json({ error: 'No requirements found in Confluence page content' });
     }
 
-    replaceRequirements(parsed);
-    audit('user', 'ingest_confluence', { pageId: page.id, title: page.title, count: parsed.length });
-    res.json({ requirements: parsed, total: parsed.length, page: { id: page.id, title: page.title, webUrl: page.webUrl } });
+    const inserted = upsertSourceRequirements(parsed);
+    audit('user', 'ingest_confluence', { pageId: page.id, title: page.title, count: inserted.length });
+    res.json({
+      added: inserted.length,
+      ...requirementsResponse(),
+      page: { id: page.id, title: page.title, webUrl: page.webUrl },
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Confluence ingest failed';
     const status = message.includes('not configured') ? 400 : message.includes('not found') ? 404 : 500;
@@ -378,10 +439,36 @@ apiRouter.post('/ingest/jira', async (req, res) => {
     }
 
     const parsed = parseJiraIssues(issues);
-    replaceRequirements(parsed);
-    res.json({ requirements: parsed, total: parsed.length, configured: !!getJiraConfig() });
+    const inserted = upsertSourceRequirements(parsed);
+    audit('user', 'ingest_jira', { count: inserted.length });
+    res.json({ added: inserted.length, ...requirementsResponse(), configured: !!getJiraConfig() });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Jira ingest failed' });
+  }
+});
+
+apiRouter.post('/ingest/paste', (req, res) => {
+  try {
+    const { text, sourceType, sourceRef } = req.body ?? {};
+    if (typeof text !== 'string' || text.trim().length < 20) {
+      return res.status(400).json({ error: 'Paste requirement text (at least a couple of sentences)' });
+    }
+    const st: 'frd' | 'brd' = sourceType === 'brd' ? 'brd' : 'frd';
+    const ref =
+      typeof sourceRef === 'string' && sourceRef.trim()
+        ? sourceRef.trim()
+        : st === 'brd'
+          ? 'Pasted BRD'
+          : 'Pasted FRD';
+    const parsed = parsePastedText(text, st, ref);
+    if (!parsed.length) {
+      return res.status(400).json({ error: 'No requirements found in pasted text' });
+    }
+    const inserted = upsertSourceRequirements(parsed);
+    audit('user', 'ingest_paste', { sourceRef: ref, count: inserted.length });
+    res.json({ added: inserted.length, ...requirementsResponse() });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Paste ingest failed' });
   }
 });
 
@@ -398,6 +485,7 @@ apiRouter.post('/generate', (req, res) => {
   if (!testCases.length) {
     return res.status(400).json({ error: 'No testable requirements found. Check for ambiguous or non-testable items.' });
   }
+  db.prepare('DELETE FROM test_cases').run();
   saveTestCases(testCases);
   const coverage = computeCoverage(reqs, testCases);
 
@@ -414,6 +502,47 @@ apiRouter.get('/test-cases', (_req, res) => {
   res.json({ testCases: cases, coverage });
 });
 
+// FR-8: user can add test cases, not just edit/remove generated ones
+apiRouter.post('/test-cases', (req, res) => {
+  const { requirementId, title, type, preconditions, steps, testData, expectedResult } = req.body ?? {};
+  if (typeof requirementId !== 'string' || typeof title !== 'string' || typeof expectedResult !== 'string') {
+    return res.status(400).json({ error: 'requirementId, title, and expectedResult are required' });
+  }
+  if (!sessionRequirements.some((r) => r.id === requirementId)) {
+    return res.status(400).json({ error: `Unknown requirementId: ${requirementId}` });
+  }
+
+  let n = sessionTestCases.length + 1;
+  let id: string;
+  do {
+    id = `TC-${String(n).padStart(3, '0')}`;
+    n++;
+  } while (sessionTestCases.some((tc) => tc.id === id));
+
+  const tc: TestCase = {
+    id,
+    requirementId,
+    title,
+    type: type === 'Negative' || type === 'Edge' || type === 'Design' ? type : 'Positive',
+    preconditions: typeof preconditions === 'string' ? preconditions : 'Target application accessible and reachable',
+    steps:
+      Array.isArray(steps) && steps.length
+        ? (steps as TestStep[])
+        : [
+            { order: 1, action: 'navigate', target: '/' },
+            { order: 2, action: 'assert-visible', target: 'body' },
+          ],
+    testData: typeof testData === 'string' ? testData : `requirement ${requirementId}`,
+    expectedResult,
+    status: 'ready',
+  };
+
+  sessionTestCases.push(tc);
+  saveTestCases(sessionTestCases);
+  audit('user', 'add_test_case', { id: tc.id, requirementId });
+  res.status(201).json(tc);
+});
+
 apiRouter.put('/test-cases/:id', (req, res) => {
   const idx = sessionTestCases.findIndex((tc) => tc.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Test case not found' });
@@ -424,7 +553,9 @@ apiRouter.put('/test-cases/:id', (req, res) => {
 
 apiRouter.delete('/test-cases/:id', (req, res) => {
   sessionTestCases = sessionTestCases.filter((tc) => tc.id !== req.params.id);
+  db.prepare('DELETE FROM test_cases WHERE id = ?').run(req.params.id);
   saveTestCases(sessionTestCases);
+  audit('user', 'delete_test_case', { id: req.params.id });
   res.json({ ok: true });
 });
 
@@ -505,7 +636,7 @@ apiRouter.post('/run', async (req, res) => {
         const summary = summarizeResults(results);
         const bugs = deduplicateBugs(
           generateBugReports(toRun, results, `${targetUrl} · Chromium · buyer role`),
-          existingBugSignatures
+          filedSignatures
         );
         sessionBugs = bugs;
 
@@ -537,8 +668,8 @@ apiRouter.post('/run', async (req, res) => {
         sessionRuns.unshift(run);
 
         db.prepare(
-          'INSERT INTO test_runs (id, target_url, environment, start_time, end_time, summary, readiness_score, readiness_band) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        ).run(runId, normalizedUrl, prodCheck.isProduction ? 'production-override' : 'non-prod', new Date().toISOString(), new Date().toISOString(), JSON.stringify(summary), readiness.score, readiness.band);
+          'INSERT INTO test_runs (id, target_url, environment, start_time, end_time, summary, readiness_score, readiness_band, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).run(runId, normalizedUrl, prodCheck.isProduction ? 'production-override' : 'non-prod', new Date().toISOString(), new Date().toISOString(), JSON.stringify(summary), readiness.score, readiness.band, JSON.stringify(run));
 
         audit('user', 'test_run', { runId, summary, readiness: readiness.score, hasInstructions: !!runInstructions });
         completeRunProgress(runId);
@@ -597,9 +728,19 @@ apiRouter.post('/bugs/:id/file', async (req, res) => {
 
     bug.jiraKey = filed.key;
     bug.status = filed.mode === 'linked' ? 'linked' : 'filed';
+    filedSignatures.set(bug.signature, filed.key);
 
+    // FR-25: write the Jira key back onto the test case, persisted across restarts
     const tc = sessionTestCases.find((t) => t.id === bug.testCaseId);
-    if (tc) tc.jiraKey = filed.key;
+    if (tc) {
+      tc.jiraKey = filed.key;
+      db.prepare('UPDATE test_cases SET jira_key = ? WHERE id = ?').run(filed.key, tc.id);
+    }
+
+    const run = sessionRuns.find((r) => ((r.bugs as BugReport[] | undefined) ?? []).some((b) => b.id === bug.id));
+    if (run) {
+      db.prepare('UPDATE test_runs SET payload = ? WHERE id = ?').run(JSON.stringify(run), run.id);
+    }
 
     res.json({ bug, filed, payload });
   } catch (err) {

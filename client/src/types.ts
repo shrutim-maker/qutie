@@ -102,6 +102,7 @@ export interface BugReport {
   requirementId: string;
   expected?: string;
   actual?: string;
+  evidenceUrl?: string;
 }
 
 export interface TestRun {

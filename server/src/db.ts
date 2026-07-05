@@ -89,6 +89,13 @@ db.exec(`
   );
 `);
 
+// Migration: full run payload persisted so dashboard trend (FR-36) survives restarts
+try {
+  db.exec('ALTER TABLE test_runs ADD COLUMN payload TEXT');
+} catch {
+  /* column already exists */
+}
+
 export function getSessionState(key: string): string {
   const row = db.prepare('SELECT value FROM session_state WHERE key = ?').get(key) as { value: string } | undefined;
   return row?.value ?? '';
