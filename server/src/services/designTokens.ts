@@ -35,11 +35,7 @@ function normalizeColor(c: string): string {
 }
 
 function colorsMatch(a: string, b: string): boolean {
-  const na = normalizeColor(a);
-  const nb = normalizeColor(b);
-  if (na === nb) return true;
-  // Allow rgb vs hex approximate match
-  return na === nb;
+  return normalizeColor(a) === normalizeColor(b);
 }
 
 export async function checkDesignToken(

@@ -92,12 +92,13 @@ export interface BugReport {
   id: string;
   resultId: string;
   title: string;
-  severity: string;
+  severity: 'functional' | 'data' | 'blocking' | 'cosmetic' | 'design';
   severityLabel: string;
   priority: string;
   reportBody: string;
   jiraKey?: string;
   status: string;
+  signature: string;
   testCaseId: string;
   requirementId: string;
   expected?: string;
@@ -119,6 +120,7 @@ export interface TestRun {
   loginDebug?: string[];
   productionWarning?: string;
   timestamp: string;
+  instructions?: string;
 }
 
 export interface JiraPayload {

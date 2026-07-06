@@ -1,10 +1,16 @@
 import { chromium } from 'playwright';
 import { attemptLogin } from '../dist/services/executor.js';
 
-const targetUrl = process.argv[2] ?? 'http://localhost:4000';
-const username = process.argv[3] ?? 'qa.buyer@quloi.test';
-const password = process.argv[4] ?? 'qutietestpass';
+// Usage: node scripts/test-login.mjs <targetUrl> <username> <password> [loginUrl]
+const targetUrl = process.argv[2];
+const username = process.argv[3] ?? '';
+const password = process.argv[4] ?? '';
 const loginUrl = process.argv[5] || undefined;
+
+if (!targetUrl) {
+  console.error('Usage: node scripts/test-login.mjs <targetUrl> <username> <password> [loginUrl]');
+  process.exit(1);
+}
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();

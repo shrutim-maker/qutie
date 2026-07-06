@@ -92,11 +92,6 @@ export function checkProductionUrl(url: string): ProductionUrlCheck {
   };
 }
 
-/** @deprecated Use checkProductionUrl — kept for callers that only need a boolean. */
-export function isProductionUrl(url: string): boolean {
-  return checkProductionUrl(url).isProduction;
-}
-
 function redactSecrets(text: string, secrets: string[]): string {
   let result = text;
   for (const s of secrets) {
