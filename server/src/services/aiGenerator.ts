@@ -204,7 +204,10 @@ export async function generateTestCasesWithAI(
       throw new Error('Could not reach the Anthropic API — check network access');
     }
     if (err instanceof Anthropic.APIError) {
-      throw new Error(`Anthropic API error ${err.status ?? ''}`.trim());
+      // The SDK's own .message is "400 {...raw json envelope...}" — the human-readable
+      // message is nested at err.error.error.message, so pull that out for the UI.
+      const apiMessage = (err as unknown as { error?: { error?: { message?: string } } }).error?.error?.message;
+      throw new Error(apiMessage ? `Anthropic API: ${apiMessage}` : `Anthropic API error ${err.status ?? ''}: ${err.message}`);
     }
     throw err;
   }

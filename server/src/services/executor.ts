@@ -983,12 +983,20 @@ export async function executeTestSuite(options: ExecuteOptions): Promise<Execute
 
       // Login-page tests must start logged out: the shared session would redirect
       // /login to the app. Run them in a fresh incognito context instead.
+      //
+      // Detected two ways, not just the first navigate target: a generator (heuristic
+      // fallback included) doesn't always target "/login" precisely even when the test
+      // is clearly attempting a fresh login — filling a password field in its opening
+      // steps is a much more reliable, generator-agnostic signal of that intent.
       const firstStep = tc.steps[0];
-      const needsFreshSession =
-        login.success &&
+      const navigatesToLoginPath =
         firstStep?.action === 'navigate' &&
         !!firstStep.target &&
         LOGIN_URL_HINTS.test(firstStep.target.startsWith('http') ? new URL(firstStep.target).pathname : firstStep.target);
+      const fillsPasswordEarly = tc.steps
+        .slice(0, 3)
+        .some((s) => s.action === 'fill' && /password/i.test(s.target ?? ''));
+      const needsFreshSession = login.success && (navigatesToLoginPath || fillsPasswordEarly);
 
       let testPage = page;
       let freshContext: import('playwright').BrowserContext | undefined;

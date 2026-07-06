@@ -200,7 +200,7 @@ Atlassian credentials and HACK project access are available to QUTIE.
 Design tokens are available in a machine-readable form for FR-40.
 11. Acceptance criteria (MVP demo)
 Feed QUTIE an FRD or Jira ticket; it produces reviewable test cases mapped to requirements.
-Give it the dummy app URL and login; it runs the suite and reports pass/fail with screenshots.
+Give it the target build's URL and login; it runs the suite and reports pass/fail with screenshots.
 It catches the planted bugs, prioritises them, and files them to HACK after confirmation, with a screenshot attached and no duplicates.
 The dashboard shows summary, coverage, token compliance, and a readiness score.
 12. Success metrics
