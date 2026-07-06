@@ -413,9 +413,29 @@ export default function App() {
     setModalPayload(
       `POST /rest/api/3/issue\n` +
       JSON.stringify(p, null, 2) +
-      (preview.duplicate ? '\n\n// Similar open issue detected. QUTIE will comment + link instead of creating a duplicate.' : '')
+      (preview.duplicate ? '\n\n// Similar open issue detected. QUTIE will comment + link instead of creating a duplicate.' : '') +
+      (bug.isDemo ? '\n\n// DEMO BUG — sample data for presentation only. Confirming here will NOT write to real Jira.' : '')
     );
     setModalOpen(true);
+  };
+
+  const handleSeedDemoBug = async () => {
+    try {
+      const { bug } = await api.seedDemoBug();
+      setBugs((prev) => (prev.some((b) => b.id === bug.id) ? prev : [bug, ...prev]));
+      go('bugs');
+    } catch (err) {
+      setGenStatus(err instanceof Error ? err.message : 'Could not add demo bug');
+    }
+  };
+
+  const handleRemoveDemoBug = async (id: string) => {
+    try {
+      await api.deleteBug(id);
+      setBugs((prev) => prev.filter((b) => b.id !== id));
+    } catch {
+      /* best-effort */
+    }
   };
 
   const confirmFile = async () => {
@@ -872,12 +892,20 @@ export default function App() {
 
           {/* BUGS */}
           <section className={`view ${view === 'bugs' ? 'active' : ''}`}>
+            {!bugs.some((b) => b.isDemo) && (
+              <div className="source-clear-row" style={{ marginBottom: 12 }}>
+                <button type="button" className="source-clear-btn" onClick={handleSeedDemoBug}>+ Seed demo bug (for presentations)</button>
+              </div>
+            )}
             {bugs.length === 0 ? (
               <div className="card"><div className="empty"><QutieMark size={60} /><p>No bugs yet. Run the suite and I'll prioritise and prep them for Jira.</p></div></div>
             ) : bugs.map((b) => (
-              <div className="bug" key={b.id}>
+              <div className={`bug ${b.isDemo ? 'bug-demo' : ''}`} key={b.id}>
                 <div style={{ flex: 1 }}>
-                  <div className="bug-title">{b.title}</div>
+                  <div className="bug-title">
+                    {b.isDemo && <span className="demo-badge">DEMO</span>}
+                    {b.title}
+                  </div>
                   <div className="bug-meta">
                     <span className={`sev sev-${b.severity}`}>{b.severityLabel}</span>
                     <span className="badge b-fail"><span className="d" />{b.priority} priority</span>
@@ -886,8 +914,13 @@ export default function App() {
                   <div className="bug-body">
                     <b>Expected:</b> {b.expected}<br />
                     <b>Actual:</b> {b.actual}<br />
-                    <b>Environment:</b> {targetUrl} · Chromium
+                    <b>Environment:</b> {b.isDemo ? '[DEMO]' : `${targetUrl} · Chromium`}
                   </div>
+                  {b.isDemo && (
+                    <button type="button" className="source-clear-btn" style={{ marginTop: 8 }} onClick={() => handleRemoveDemoBug(b.id)}>
+                      Remove demo bug
+                    </button>
+                  )}
                 </div>
                 <div className="bug-right">
                   {b.evidenceUrl ? (
@@ -899,7 +932,7 @@ export default function App() {
                   )}
                   {b.status === 'filed' || b.status === 'linked' ? (
                     <span className="jira-key" style={{ color: b.status === 'linked' ? 'var(--warn)' : undefined }}>
-                      {b.status === 'linked' ? `⚡ Linked to ${b.jiraKey}` : `✓ Filed ${b.jiraKey}`}
+                      {b.isDemo ? `✓ Simulated ${b.jiraKey} (not real)` : b.status === 'linked' ? `⚡ Linked to ${b.jiraKey}` : `✓ Filed ${b.jiraKey}`}
                     </span>
                   ) : (
                     <button className="btn btn-outline btn-pill" style={{ width: '100%', justifyContent: 'center' }} onClick={() => openBugModal(b)}>

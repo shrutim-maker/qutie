@@ -64,6 +64,8 @@ export interface BugReport {
   expected?: string;
   actual?: string;
   evidenceUrl?: string;
+  /** Seeded via /api/bugs/demo for presentations — never filed to real Jira. */
+  isDemo?: boolean;
 }
 
 export interface RunSummary {

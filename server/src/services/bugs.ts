@@ -79,6 +79,43 @@ export function generateBugReports(
   return bugs;
 }
 
+/**
+ * Seeds one clearly-fake bug for live demos/presentations — no real test run behind it.
+ * isDemo: true is a hard safety rail (see routes/api.ts POST /bugs/:id/file) so this can
+ * never actually create a real Jira issue, even if someone clicks "file" on it.
+ */
+export function createDemoBug(): BugReport {
+  return {
+    id: 'bug-demo',
+    resultId: 'demo-result',
+    title: '[DEMO] Booking form accepts an empty destination field',
+    severity: 'blocking',
+    severityLabel: 'Critical',
+    priority: 'Blocker',
+    reportBody: [
+      '*[DEMO BUG — sample data for presentation purposes only, not a real finding]*',
+      '',
+      '*Steps to reproduce:*',
+      '1. navigate /consolidation',
+      '2. click button:has-text("Create Booking")',
+      '3. click button:has-text("Submit") (destination field left empty)',
+      '',
+      '*Expected:* Booking submission is rejected when the destination field is empty, with a clear validation error shown to the user.',
+      '*Actual:* The booking was accepted with an empty destination field. No validation error appeared and the shipment proceeded without a destination.',
+      '*Environment:* [DEMO] · Chromium · buyer role',
+      '*Requirement:* FR-DEMO',
+      '*Failing step:* 3',
+    ].join('\n'),
+    status: 'pending',
+    signature: 'demo-signature-never-filed',
+    testCaseId: 'TC-DEMO',
+    requirementId: 'FR-DEMO',
+    expected: 'Booking submission is rejected when the destination field is empty, with a clear validation error shown to the user.',
+    actual: 'The booking was accepted with an empty destination field. No validation error appeared and the shipment proceeded without a destination.',
+    isDemo: true,
+  };
+}
+
 function buildReportBody(tc: TestCase, result: TestResult, environment: string): string {
   const steps = tc.steps.map((s) => `${s.order}. ${s.action} ${s.target ?? ''} ${s.value ?? ''}`).join('\n');
   return [

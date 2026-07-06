@@ -16,7 +16,7 @@ import {
   failRunProgress,
   pruneStaleProgress,
 } from '../services/runProgress.js';
-import { generateBugReports, deduplicateBugs, computeReadinessScore, computeBugWeight } from '../services/bugs.js';
+import { generateBugReports, deduplicateBugs, computeReadinessScore, computeBugWeight, createDemoBug } from '../services/bugs.js';
 import { buildJiraPayload, fileBugToJira, fetchJiraIssues, fetchJiraIssuesByKeys, getJiraConfig } from '../services/jira.js';
 import {
   fetchConfluencePageById,
@@ -738,6 +738,24 @@ apiRouter.get('/bugs', (_req, res) => {
   res.json({ bugs: sessionBugs });
 });
 
+/** For live demos/presentations: seed one clearly-fake bug. Idempotent — re-seeding just returns the existing one. */
+apiRouter.post('/bugs/demo', (_req, res) => {
+  let bug = sessionBugs.find((b) => b.isDemo);
+  if (!bug) {
+    bug = createDemoBug();
+    sessionBugs = [bug, ...sessionBugs];
+    audit('user', 'seed_demo_bug', { bugId: bug.id });
+  }
+  res.json({ bug });
+});
+
+apiRouter.delete('/bugs/:id', (req, res) => {
+  const before = sessionBugs.length;
+  sessionBugs = sessionBugs.filter((b) => b.id !== req.params.id);
+  if (sessionBugs.length === before) return res.status(404).json({ error: 'Bug not found' });
+  res.json({ ok: true });
+});
+
 apiRouter.post('/bugs/:id/preview', (req, res) => {
   const bug = sessionBugs.find((b) => b.id === req.params.id);
   if (!bug) return res.status(404).json({ error: 'Bug not found' });
@@ -755,6 +773,16 @@ apiRouter.post('/bugs/:id/file', async (req, res) => {
     if (priority) bug.priority = priority;
 
     const payload = buildJiraPayload(bug);
+
+    // Hard safety rail: a demo/presentation bug must never create a real Jira issue,
+    // regardless of severity/priority overrides or whether real Jira creds are configured.
+    if (bug.isDemo) {
+      bug.jiraKey = 'DEMO-1';
+      bug.status = 'filed';
+      audit('user', 'demo_bug_file_simulated', { bugId: bug.id });
+      return res.json({ bug, filed: { key: 'DEMO-1', mode: 'mock' }, payload });
+    }
+
     const result = sessionResults.find((r) => r.id === bug.resultId);
     const filed = await fileBugToJira(bug, payload, result?.evidencePath);
 

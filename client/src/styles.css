@@ -204,6 +204,8 @@ textarea:focus{outline:none;border-color:var(--outline)!important;box-shadow:var
 .bug-right{width:150px;flex-shrink:0;text-align:right}
 .jira-key{font-size:10px;font-weight:600;color:var(--pass);display:inline-flex;align-items:center;gap:5px}
 .dedup{font-size:8.4px;color:var(--warn);margin-top:6px}
+.bug-demo{border-left:3px dashed var(--warn);background:repeating-linear-gradient(135deg,var(--white),var(--white) 10px,#FFF8EE 10px,#FFF8EE 20px)}
+.demo-badge{display:inline-flex;align-items:center;font-size:8px;font-weight:700;letter-spacing:.6px;color:#fff;background:var(--warn);padding:2px 7px;border-radius:4px;margin-right:8px;vertical-align:middle}
 
 /* ── Modals ───────────────────────────────────────────── */
 .overlay{position:fixed;inset:0;background:rgba(6,25,47,.45);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:50}

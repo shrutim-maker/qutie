@@ -95,6 +95,8 @@ export const api = {
   getRunProgress: (runId: string) => request<import('./types').RunProgress>(`/run/${runId}/progress`),
   getRun: (runId: string) => request<import('./types').TestRun>(`/run/${runId}`),
   getBugs: () => request<{ bugs: import('./types').BugReport[] }>('/bugs'),
+  seedDemoBug: () => request<{ bug: import('./types').BugReport }>('/bugs/demo', { method: 'POST' }),
+  deleteBug: (id: string) => request<{ ok: boolean }>(`/bugs/${id}`, { method: 'DELETE' }),
   previewBug: (id: string) => request<{ payload: import('./types').JiraPayload; bug: import('./types').BugReport; duplicate: boolean }>(`/bugs/${id}/preview`, { method: 'POST' }),
   fileBug: (id: string, overrides: { priority?: string } = {}) =>
     request<{ bug: import('./types').BugReport; filed: { key: string; mode: string }; payload: import('./types').JiraPayload }>(`/bugs/${id}/file`, {
