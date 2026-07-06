@@ -74,6 +74,8 @@ export default function App() {
   const [expandedCases, setExpandedCases] = useState<Set<string>>(new Set());
   const [priorityOverride, setPriorityOverride] = useState('');
   const [filing, setFiling] = useState(false);
+  const [ingesting, setIngesting] = useState(false);
+  const [ingestLabel, setIngestLabel] = useState('');
 
   const refreshRequirements = useCallback(async () => {
     try {
@@ -384,6 +386,8 @@ export default function App() {
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>, sourceType: 'frd' | 'brd') => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setIngesting(true);
+    setIngestLabel(`Reading ${file.name} with Claude — this can take up to a minute for a full document...`);
     try {
       const data = await api.ingestUpload(file, sourceType);
       await refreshRequirements();
@@ -392,11 +396,16 @@ export default function App() {
       setReqListOpen(true);
     } catch (err) {
       setGenStatus(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setIngesting(false);
+      setIngestLabel('');
     }
     e.target.value = '';
   };
 
   const handleConfluenceIngest = async () => {
+    setIngesting(true);
+    setIngestLabel('Reading the Confluence page with Claude...');
     try {
       const body =
         confluenceMode === 'pageId'
@@ -420,10 +429,15 @@ export default function App() {
       setConfluenceTitle('');
     } catch (err) {
       setGenStatus(err instanceof Error ? err.message : 'Confluence ingest failed');
+    } finally {
+      setIngesting(false);
+      setIngestLabel('');
     }
   };
 
   const handlePasteIngest = async () => {
+    setIngesting(true);
+    setIngestLabel('Reading the pasted text with Claude...');
     try {
       const data = await api.ingestPaste(pasteText, pasteSourceType);
       await refreshRequirements();
@@ -434,10 +448,15 @@ export default function App() {
       setPasteText('');
     } catch (err) {
       setGenStatus(err instanceof Error ? err.message : 'Paste ingest failed');
+    } finally {
+      setIngesting(false);
+      setIngestLabel('');
     }
   };
 
   const handleJiraIngest = async () => {
+    setIngesting(true);
+    setIngestLabel('Fetching and reading Jira issues...');
     try {
       const data = await api.ingestJira(jiraQuery || undefined);
       await refreshRequirements();
@@ -447,6 +466,9 @@ export default function App() {
       setJiraQuery('');
     } catch (err) {
       setGenStatus(err instanceof Error ? err.message : 'Jira ingest failed');
+    } finally {
+      setIngesting(false);
+      setIngestLabel('');
     }
   };
 
@@ -565,6 +587,12 @@ export default function App() {
 
             <div className="card">
               <div className="step-label"><span className="step-num">1</span> Requirement sources</div>
+              {ingesting && (
+                <div className="ingest-status">
+                  <span className="spinner-accent" />
+                  {ingestLabel}
+                </div>
+              )}
               {!hasRequirements ? (
                 <div className="empty" style={{ padding: '30px 20px' }}>
                   <QutieMark size={48} />
@@ -629,24 +657,24 @@ export default function App() {
                   )}
                 </>
               )}
-              <div className="source-row">
-                <div className="source-chip" style={{ borderStyle: 'dashed' }} onClick={() => frdInputRef.current?.click()}>
+              <div className="source-row" style={ingesting ? { opacity: 0.5, pointerEvents: 'none' } : undefined}>
+                <div className="source-chip" style={{ borderStyle: 'dashed' }} onClick={() => !ingesting && frdInputRef.current?.click()}>
                   <span>+</span>
                   <div><div>Upload FRD</div><div style={{ fontSize: 8.8, color: 'var(--t-label)' }}>.pdf, .docx, .md, .txt</div></div>
                 </div>
-                <div className="source-chip" style={{ borderStyle: 'dashed' }} onClick={() => brdInputRef.current?.click()}>
+                <div className="source-chip" style={{ borderStyle: 'dashed' }} onClick={() => !ingesting && brdInputRef.current?.click()}>
                   <span>+</span>
                   <div><div>Upload BRD</div><div style={{ fontSize: 8.8, color: 'var(--t-label)' }}>.pdf, .docx, .md, .txt</div></div>
                 </div>
-                <div className="source-chip" style={{ borderStyle: 'dashed' }} onClick={() => setPasteOpen(true)}>
+                <div className="source-chip" style={{ borderStyle: 'dashed' }} onClick={() => !ingesting && setPasteOpen(true)}>
                   <span>+</span>
                   <div><div>Paste text</div><div style={{ fontSize: 8.8, color: 'var(--t-label)' }}>FRD or BRD as plain text</div></div>
                 </div>
-                <div className="source-chip" style={{ borderStyle: 'dashed' }} onClick={() => setConfluenceOpen(true)}>
+                <div className="source-chip" style={{ borderStyle: 'dashed' }} onClick={() => !ingesting && setConfluenceOpen(true)}>
                   <span>+</span>
                   <div><div>Confluence</div><div style={{ fontSize: 8.8, color: 'var(--t-label)' }}>Page ID, URL, or search</div></div>
                 </div>
-                <div className="source-chip" style={{ borderStyle: 'dashed' }} onClick={() => setJiraOpen(true)}>
+                <div className="source-chip" style={{ borderStyle: 'dashed' }} onClick={() => !ingesting && setJiraOpen(true)}>
                   <span>+</span>
                   <div><div>Connect Jira</div><div style={{ fontSize: 8.8, color: 'var(--t-label)' }}>JQL or issue keys</div></div>
                 </div>
@@ -1144,7 +1172,9 @@ export default function App() {
           </div>
           <div className="modal-f">
             <button className="btn btn-ghost" onClick={() => setConfluenceOpen(false)}>Cancel</button>
-            <button className="btn btn-primary" onClick={handleConfluenceIngest}>Fetch page</button>
+            <button className="btn btn-primary" disabled={ingesting} onClick={handleConfluenceIngest}>
+              {ingesting ? <><span className="spinner" /> Reading...</> : 'Fetch page'}
+            </button>
           </div>
         </div>
       </div>
@@ -1174,7 +1204,9 @@ export default function App() {
           </div>
           <div className="modal-f">
             <button className="btn btn-ghost" onClick={() => setPasteOpen(false)}>Cancel</button>
-            <button className="btn btn-primary" disabled={pasteText.trim().length < 20} onClick={handlePasteIngest}>Ingest text</button>
+            <button className="btn btn-primary" disabled={pasteText.trim().length < 20 || ingesting} onClick={handlePasteIngest}>
+              {ingesting ? <><span className="spinner" /> Reading...</> : 'Ingest text'}
+            </button>
           </div>
         </div>
       </div>
@@ -1189,7 +1221,9 @@ export default function App() {
           </div>
           <div className="modal-f">
             <button className="btn btn-ghost" onClick={() => setJiraOpen(false)}>Cancel</button>
-            <button className="btn btn-primary" onClick={handleJiraIngest}>Fetch issues</button>
+            <button className="btn btn-primary" disabled={ingesting} onClick={handleJiraIngest}>
+              {ingesting ? <><span className="spinner" /> Fetching...</> : 'Fetch issues'}
+            </button>
           </div>
         </div>
       </div>
