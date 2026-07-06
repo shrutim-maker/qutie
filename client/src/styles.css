@@ -104,6 +104,22 @@ input{font-family:inherit}
 .source-clear-row{display:flex;justify-content:flex-end;margin-bottom:8px}
 .source-clear-btn{border:none;background:transparent;color:var(--t-muted);font-size:9px;cursor:pointer;text-decoration:underline;padding:0}
 .source-clear-btn:hover{color:var(--fail)}
+
+/* ── Extracted requirements ───────────────────────────── */
+.extractor-note{font-size:9.3px;color:var(--t-secondary);background:var(--info-tint);border:1px solid rgba(2,136,250,.14);border-radius:var(--radius-sm);padding:8px 12px;margin-bottom:10px}
+.req-toggle-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--b-input);background:var(--white);color:var(--t-secondary);font-size:10px;font-weight:500;padding:7px 13px;border-radius:var(--radius-pill);transition:.15s}
+.req-toggle-btn:hover{border-color:var(--outline);color:var(--t-dark)}
+.req-toggle-caret{display:inline-block;font-size:8px;transition:transform .18s}
+.req-toggle-caret.open{transform:rotate(90deg)}
+.req-list{margin-top:12px;display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;padding-right:4px}
+.req-item{border:1px solid var(--b-strong);border-radius:var(--radius-sm);padding:11px 14px;background:var(--white)}
+.req-item-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.req-item-text{font-size:11px;color:var(--t-primary);line-height:1.45}
+.req-item-rationale{font-size:9.3px;color:var(--t-muted);margin-top:5px;font-style:italic}
+.req-conf-badge{display:inline-flex;align-items:center;font-size:8.6px;font-weight:700;padding:3px 9px;border-radius:var(--radius-pill)}
+.req-conf-badge.conf-high{background:#E7F6EE;color:var(--pass)}
+.req-conf-badge.conf-mid{background:#FCF3E3;color:var(--warn)}
+.req-conf-badge.conf-low{background:var(--err-tint);color:var(--fail)}
 .field label{display:block;font-size:9.6px;color:var(--t-secondary);font-weight:500;margin-bottom:6px}
 .field input{width:100%;border:1px solid var(--b-input);border-radius:var(--radius-sm);padding:10px 13px;font-size:10.6px;color:var(--t-primary);transition:.15s;background:var(--white)}
 .field input:focus{outline:none;border-color:var(--outline);box-shadow:var(--ring)}

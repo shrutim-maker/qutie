@@ -65,15 +65,18 @@ export const api = {
     });
   },
   ingestPaste: (text: string, sourceType: 'frd' | 'brd', sourceRef?: string) =>
-    request<{ added: number; total: number; sources: RequirementSource[] }>('/ingest/paste', {
-      method: 'POST',
-      body: JSON.stringify({ text, sourceType, sourceRef }),
-    }),
-  ingestConfluence: (body: ConfluenceIngestBody) =>
-    request<{ requirements: import('./types').Requirement[]; total: number; page: { id: string; title: string; webUrl: string } }>(
-      '/ingest/confluence',
-      { method: 'POST', body: JSON.stringify(body) }
+    request<{ added: number; total: number; sources: RequirementSource[]; extractor?: 'ai' | 'heuristic'; extractorNote?: string }>(
+      '/ingest/paste',
+      { method: 'POST', body: JSON.stringify({ text, sourceType, sourceRef }) }
     ),
+  ingestConfluence: (body: ConfluenceIngestBody) =>
+    request<{
+      requirements: import('./types').Requirement[];
+      total: number;
+      page: { id: string; title: string; webUrl: string };
+      extractor?: 'ai' | 'heuristic';
+      extractorNote?: string;
+    }>('/ingest/confluence', { method: 'POST', body: JSON.stringify(body) }),
   ingestJira: (jql?: string, issueKeys?: string[]) =>
     request<{ requirements: import('./types').Requirement[]; total: number; configured?: boolean }>('/ingest/jira', {
       method: 'POST',

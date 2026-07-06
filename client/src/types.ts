@@ -5,6 +5,8 @@ export interface Requirement {
   text: string;
   testable: boolean;
   ambiguous: boolean;
+  confidence: number;
+  rationale: string;
 }
 
 export interface TestStep {

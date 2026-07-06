@@ -96,6 +96,18 @@ try {
   /* column already exists */
 }
 
+// Migration: confidence + rationale for AI/heuristic requirement extraction
+try {
+  db.exec('ALTER TABLE requirements ADD COLUMN confidence REAL DEFAULT 70');
+} catch {
+  /* column already exists */
+}
+try {
+  db.exec('ALTER TABLE requirements ADD COLUMN rationale TEXT');
+} catch {
+  /* column already exists */
+}
+
 export function getSessionState(key: string): string {
   const row = db.prepare('SELECT value FROM session_state WHERE key = ?').get(key) as { value: string } | undefined;
   return row?.value ?? '';

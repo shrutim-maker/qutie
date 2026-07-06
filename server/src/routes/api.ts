@@ -155,7 +155,7 @@ function loadRequirementsFromDb() {
   purgeStaleDemoData();
 
   const rows = db
-    .prepare('SELECT id, source_type, source_ref, text, testable, ambiguous FROM requirements')
+    .prepare('SELECT id, source_type, source_ref, text, testable, ambiguous, confidence, rationale FROM requirements')
     .all() as Array<{
     id: string;
     source_type: string;
@@ -163,6 +163,8 @@ function loadRequirementsFromDb() {
     text: string;
     testable: number;
     ambiguous: number;
+    confidence: number | null;
+    rationale: string | null;
   }>;
 
   sessionRequirements = rows.map((r) => ({
@@ -172,6 +174,8 @@ function loadRequirementsFromDb() {
     text: r.text,
     testable: r.testable === 1,
     ambiguous: r.ambiguous === 1,
+    confidence: r.confidence ?? 70,
+    rationale: r.rationale ?? 'Extracted heuristically before confidence tracking was added.',
   }));
 
   loadTestCasesFromDb();
@@ -265,7 +269,7 @@ function upsertSourceRequirements(reqs: Requirement[]): Requirement[] {
 
   const existingIds = new Set(sessionRequirements.map((r) => r.id));
   const stmt = db.prepare(
-    'INSERT OR REPLACE INTO requirements (id, source_type, source_ref, text, testable, ambiguous) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT OR REPLACE INTO requirements (id, source_type, source_ref, text, testable, ambiguous, confidence, rationale) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   );
 
   const inserted: Requirement[] = [];
@@ -277,7 +281,7 @@ function upsertSourceRequirements(reqs: Requirement[]): Requirement[] {
     existingIds.add(id);
 
     const req: Requirement = { ...r, id };
-    stmt.run(req.id, req.sourceType, req.sourceRef, req.text, req.testable ? 1 : 0, req.ambiguous ? 1 : 0);
+    stmt.run(req.id, req.sourceType, req.sourceRef, req.text, req.testable ? 1 : 0, req.ambiguous ? 1 : 0, req.confidence, req.rationale);
     sessionRequirements.push(req);
     inserted.push(req);
   }
@@ -375,11 +379,11 @@ apiRouter.post('/ingest/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const sourceType = (req.body.sourceType as 'frd' | 'brd') ?? 'frd';
-    const parsed = await parseDocument(req.file.buffer, req.file.originalname, sourceType);
+    const { requirements: parsed, extractor, extractorNote } = await parseDocument(req.file.buffer, req.file.originalname, sourceType);
     if (!parsed.length) return res.status(400).json({ error: 'No requirements found in uploaded file' });
     const inserted = upsertSourceRequirements(parsed);
-    audit('user', 'ingest_upload', { filename: req.file.originalname, count: inserted.length });
-    res.json({ added: inserted.length, ...requirementsResponse() });
+    audit('user', 'ingest_upload', { filename: req.file.originalname, count: inserted.length, extractor });
+    res.json({ added: inserted.length, ...requirementsResponse(), extractor, extractorNote });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Ingest failed' });
   }
@@ -403,17 +407,19 @@ apiRouter.post('/ingest/confluence', async (req, res) => {
       });
     }
 
-    const parsed = ingestConfluencePage(page);
+    const { requirements: parsed, extractor, extractorNote } = await ingestConfluencePage(page);
     if (!parsed.length) {
       return res.status(400).json({ error: 'No requirements found in Confluence page content' });
     }
 
     const inserted = upsertSourceRequirements(parsed);
-    audit('user', 'ingest_confluence', { pageId: page.id, title: page.title, count: inserted.length });
+    audit('user', 'ingest_confluence', { pageId: page.id, title: page.title, count: inserted.length, extractor });
     res.json({
       added: inserted.length,
       ...requirementsResponse(),
       page: { id: page.id, title: page.title, webUrl: page.webUrl },
+      extractor,
+      extractorNote,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Confluence ingest failed';
@@ -460,7 +466,7 @@ apiRouter.post('/ingest/jira', async (req, res) => {
   }
 });
 
-apiRouter.post('/ingest/paste', (req, res) => {
+apiRouter.post('/ingest/paste', async (req, res) => {
   try {
     const { text, sourceType, sourceRef } = req.body ?? {};
     if (typeof text !== 'string' || text.trim().length < 20) {
@@ -473,13 +479,13 @@ apiRouter.post('/ingest/paste', (req, res) => {
         : st === 'brd'
           ? 'Pasted BRD'
           : 'Pasted FRD';
-    const parsed = parsePastedText(text, st, ref);
+    const { requirements: parsed, extractor, extractorNote } = await parsePastedText(text, st, ref);
     if (!parsed.length) {
       return res.status(400).json({ error: 'No requirements found in pasted text' });
     }
     const inserted = upsertSourceRequirements(parsed);
-    audit('user', 'ingest_paste', { sourceRef: ref, count: inserted.length });
-    res.json({ added: inserted.length, ...requirementsResponse() });
+    audit('user', 'ingest_paste', { sourceRef: ref, count: inserted.length, extractor });
+    res.json({ added: inserted.length, ...requirementsResponse(), extractor, extractorNote });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Paste ingest failed' });
   }

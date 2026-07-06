@@ -1,4 +1,4 @@
-import type { Requirement } from '../types.js';
+import type { ExtractionResult } from './ingestion.js';
 import { parseConfluenceContent } from './ingestion.js';
 
 export interface ConfluenceConfig {
@@ -149,6 +149,6 @@ export async function fetchConfluencePageByTitle(
   return toPage(config, data.results[0]);
 }
 
-export function ingestConfluencePage(page: ConfluencePage): Requirement[] {
+export function ingestConfluencePage(page: ConfluencePage): Promise<ExtractionResult> {
   return parseConfluenceContent(page.body, page.title || page.webUrl);
 }

@@ -5,6 +5,10 @@ export interface Requirement {
   text: string;
   testable: boolean;
   ambiguous: boolean;
+  /** 0-100: how confident the extractor is that this is a genuine, atomic, testable requirement. */
+  confidence: number;
+  /** Short explanation of why this text was surfaced as a requirement. */
+  rationale: string;
 }
 
 export interface TestStep {

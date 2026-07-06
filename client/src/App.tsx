@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, Fragment } from 'react';
 import { api, type RequirementSource } from './api';
 import { QutieMark } from './components/QutieMark';
-import type { BugReport, Coverage, ProgressStep, RunProgress, TestCase, TestResult, TestRun } from './types';
+import type { BugReport, Coverage, ProgressStep, Requirement, RunProgress, TestCase, TestResult, TestRun } from './types';
 
 type View = 'run' | 'cases' | 'results' | 'bugs' | 'dash';
 
@@ -53,6 +53,9 @@ export default function App() {
   const brdInputRef = useRef<HTMLInputElement>(null);
   const [reqCount, setReqCount] = useState(0);
   const [sources, setSources] = useState<RequirementSource[]>([]);
+  const [requirements, setRequirements] = useState<Requirement[]>([]);
+  const [reqListOpen, setReqListOpen] = useState(false);
+  const [extractorNote, setExtractorNote] = useState('');
   const [instructions, setInstructions] = useState('');
   const [instructionsSaved, setInstructionsSaved] = useState(false);
   const [confluenceOpen, setConfluenceOpen] = useState(false);
@@ -77,9 +80,11 @@ export default function App() {
       const data = await api.getRequirements();
       setReqCount(data.total);
       setSources(data.sources);
+      setRequirements(data.requirements);
     } catch {
       setReqCount(0);
       setSources([]);
+      setRequirements([]);
     }
   }, []);
 
@@ -169,8 +174,10 @@ export default function App() {
       const data = await api.deleteRequirementSource(source.sourceType, source.sourceRef);
       setReqCount(data.total);
       setSources(data.sources);
+      setRequirements(data.requirements);
       clearRelatedTestState();
       setGenStatus(data.total === 0 ? '' : `Removed ${source.sourceRef} — ${data.total} requirements remaining`);
+      if (data.total === 0) setExtractorNote('');
     } catch (err) {
       setGenStatus(err instanceof Error ? err.message : 'Remove failed');
     }
@@ -184,8 +191,11 @@ export default function App() {
       const data = await api.clearRequirements();
       setReqCount(data.total);
       setSources(data.sources);
+      setRequirements(data.requirements);
       clearRelatedTestState();
       setGenStatus('');
+      setExtractorNote('');
+      setReqListOpen(false);
     } catch (err) {
       setGenStatus(err instanceof Error ? err.message : 'Clear failed');
     }
@@ -361,13 +371,25 @@ export default function App() {
     });
   };
 
+  const describeExtractor = (data: { extractor?: 'ai' | 'heuristic'; extractorNote?: string }) => {
+    if (data.extractor === 'ai') {
+      setExtractorNote('✦ Claude read the document and scored each requirement — expand the list below to see why.');
+    } else if (data.extractorNote) {
+      setExtractorNote(data.extractorNote);
+    } else if (data.extractor === 'heuristic') {
+      setExtractorNote('Pattern-based extraction (Claude AI not configured) — expand the list below to see confidence per requirement.');
+    }
+  };
+
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>, sourceType: 'frd' | 'brd') => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
       const data = await api.ingestUpload(file, sourceType);
       await refreshRequirements();
+      describeExtractor(data);
       setGenStatus(`Ingested ${file.name} — ${data.total} requirements total`);
+      setReqListOpen(true);
     } catch (err) {
       setGenStatus(err instanceof Error ? err.message : 'Upload failed');
     }
@@ -388,7 +410,9 @@ export default function App() {
               };
       const data = await api.ingestConfluence(body);
       await refreshRequirements();
+      describeExtractor(data);
       setGenStatus(`Ingested Confluence page "${data.page.title}" — ${data.total} requirements total`);
+      setReqListOpen(true);
       setConfluenceOpen(false);
       setConfluencePageId('');
       setConfluencePageUrl('');
@@ -403,7 +427,9 @@ export default function App() {
     try {
       const data = await api.ingestPaste(pasteText, pasteSourceType);
       await refreshRequirements();
+      describeExtractor(data);
       setGenStatus(`Ingested pasted ${pasteSourceType.toUpperCase()} — ${data.total} requirements total`);
+      setReqListOpen(true);
       setPasteOpen(false);
       setPasteText('');
     } catch (err) {
@@ -416,6 +442,7 @@ export default function App() {
       const data = await api.ingestJira(jiraQuery || undefined);
       await refreshRequirements();
       setGenStatus(`Ingested Jira issues — ${data.total} requirements total`);
+      setReqListOpen(true);
       setJiraOpen(false);
       setJiraQuery('');
     } catch (err) {
@@ -572,6 +599,34 @@ export default function App() {
                       </div>
                     ))}
                   </div>
+
+                  {extractorNote && <div className="extractor-note">{extractorNote}</div>}
+
+                  <button type="button" className="req-toggle-btn" onClick={() => setReqListOpen((v) => !v)}>
+                    <span className={`req-toggle-caret ${reqListOpen ? 'open' : ''}`}>▸</span>
+                    {reqListOpen ? 'Hide' : 'Show'} {requirements.length} extracted requirement{requirements.length === 1 ? '' : 's'}
+                  </button>
+
+                  {reqListOpen && (
+                    <div className="req-list">
+                      {requirements.map((r) => {
+                        const conf = Math.round(r.confidence ?? 0);
+                        const confClass = conf >= 80 ? 'conf-high' : conf >= 50 ? 'conf-mid' : 'conf-low';
+                        return (
+                          <div key={r.id} className="req-item">
+                            <div className="req-item-top">
+                              <span className="req-link">{r.id}</span>
+                              <span className={`req-conf-badge ${confClass}`}>{conf}% confidence</span>
+                              {r.ambiguous && <span className="type-badge" style={{ background: '#FCEEE0', color: '#b46a1e' }}>Ambiguous</span>}
+                              {!r.testable && <span className="type-badge" style={{ background: 'var(--track)', color: 'var(--t-muted)' }}>Not testable</span>}
+                            </div>
+                            <div className="req-item-text">{r.text}</div>
+                            <div className="req-item-rationale">Why: {r.rationale}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </>
               )}
               <div className="source-row">

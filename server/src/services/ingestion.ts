@@ -2,6 +2,8 @@ import mammoth from 'mammoth';
 import path from 'path';
 import { createRequire } from 'module';
 import type { Requirement } from '../types.js';
+import { isAiConfigured } from './aiGenerator.js';
+import { extractRequirementsWithAI } from './aiRequirements.js';
 
 // pdf-parse is CJS-only; import the lib entry directly to avoid its debug-mode side effects
 const require = createRequire(import.meta.url);
@@ -50,7 +52,7 @@ function pushHeuristicRequirement(
   sourceType: 'frd' | 'brd' | 'confluence',
   sourceRef: string,
   rawBody: string,
-  opts?: { forceAmbiguous?: boolean }
+  opts?: { forceAmbiguous?: boolean; confidence?: number; rationale?: string }
 ): void {
   const body = rawBody
     .replace(/^[•●▪○*-]\s+/, '')
@@ -61,13 +63,16 @@ function pushHeuristicRequirement(
   const norm = normalizeForDedup(body);
   if (seenText.has(norm)) return;
   seenText.add(norm);
+  const ambiguous = opts?.forceAmbiguous ? true : isAmbiguous(body);
   reqs.push({
     id: `REQ-${String(counter.n++).padStart(3, '0')}`,
     sourceType,
     sourceRef,
     text: body,
     testable: opts?.forceAmbiguous ? false : isTestable(body),
-    ambiguous: opts?.forceAmbiguous ? true : isAmbiguous(body),
+    ambiguous,
+    confidence: ambiguous ? Math.min(opts?.confidence ?? 60, 40) : (opts?.confidence ?? 60),
+    rationale: opts?.rationale ?? 'Contains requirement language (must/shall/should) — extracted heuristically, not verified by AI.',
   });
 }
 
@@ -107,7 +112,8 @@ function extractSentenceCandidates(text: string): string[] {
   return results;
 }
 
-function extractFrRequirements(
+/** Pattern-based fallback extractor — used when AI extraction is unavailable or fails. */
+export function extractRequirementsHeuristic(
   text: string,
   sourceType: 'frd' | 'brd' | 'confluence',
   sourceRef: string
@@ -128,7 +134,16 @@ function extractFrRequirements(
       if (body.length < 10) continue;
       seenIds.add(id);
       seenText.add(normalizeForDedup(body));
-      reqs.push({ id, sourceType, sourceRef, text: body, testable: isTestable(body), ambiguous: isAmbiguous(body) });
+      reqs.push({
+        id,
+        sourceType,
+        sourceRef,
+        text: body,
+        testable: isTestable(body),
+        ambiguous: isAmbiguous(body),
+        confidence: 95,
+        rationale: `Explicitly numbered requirement "${id}" with mandatory language ("shall"/"must"/"will") in the document.`,
+      });
     }
   }
 
@@ -142,17 +157,32 @@ function extractFrRequirements(
       if (body.length < 10) continue;
       seenIds.add(id);
       seenText.add(normalizeForDedup(body));
-      reqs.push({ id, sourceType, sourceRef, text: body, testable: isTestable(body), ambiguous: isAmbiguous(body) });
+      reqs.push({
+        id,
+        sourceType,
+        sourceRef,
+        text: body,
+        testable: isTestable(body),
+        ambiguous: isAmbiguous(body),
+        confidence: 90,
+        rationale: `Line explicitly labeled "${id}" in the document.`,
+      });
     }
   }
 
   // Most real-world BRDs aren't FR-/BRD-numbered — pull requirement-bearing bullets and
   // sentences directly out of the prose instead of guessing from section headers alone.
   for (const body of extractBulletCandidates(text)) {
-    pushHeuristicRequirement(reqs, seenText, counter, sourceType, sourceRef, body);
+    pushHeuristicRequirement(reqs, seenText, counter, sourceType, sourceRef, body, {
+      confidence: 65,
+      rationale: 'Bulleted/numbered list item phrased as an obligation (contains "must", "shall", "should", or similar).',
+    });
   }
   for (const body of extractSentenceCandidates(text)) {
-    pushHeuristicRequirement(reqs, seenText, counter, sourceType, sourceRef, body);
+    pushHeuristicRequirement(reqs, seenText, counter, sourceType, sourceRef, body, {
+      confidence: 50,
+      rationale: 'Sentence in the document body using requirement language, pulled out of surrounding prose.',
+    });
   }
 
   // Last resort: nothing structured was found at all. Chunk by numbered section headers,
@@ -170,18 +200,53 @@ function extractFrRequirements(
         const lastBoundary = Math.max(body.lastIndexOf('. '), body.lastIndexOf('.\n'));
         if (lastBoundary > 100) body = body.slice(0, lastBoundary + 1);
       }
-      pushHeuristicRequirement(reqs, seenText, counter, sourceType, sourceRef, body, { forceAmbiguous: true });
+      pushHeuristicRequirement(reqs, seenText, counter, sourceType, sourceRef, body, {
+        forceAmbiguous: true,
+        confidence: 20,
+        rationale: 'No explicit requirement markers found anywhere in the document — this is a raw section, flagged for manual review rather than a verified requirement.',
+      });
     }
   }
 
   return reqs;
 }
 
+export interface ExtractionResult {
+  requirements: Requirement[];
+  extractor: 'ai' | 'heuristic';
+  extractorNote?: string;
+}
+
+/**
+ * Extract requirements from raw text, preferring Claude (reads the document like a human QA
+ * lead and gives per-requirement confidence + rationale) and falling back to pattern matching
+ * when AI is unconfigured or fails.
+ */
+async function extractRequirements(
+  text: string,
+  sourceType: 'frd' | 'brd' | 'confluence',
+  sourceRef: string
+): Promise<ExtractionResult> {
+  if (isAiConfigured()) {
+    try {
+      const aiReqs = await extractRequirementsWithAI(text, sourceType, sourceRef);
+      if (aiReqs.length) return { requirements: aiReqs, extractor: 'ai' };
+    } catch (err) {
+      return {
+        requirements: extractRequirementsHeuristic(text, sourceType, sourceRef),
+        extractor: 'heuristic',
+        extractorNote: `AI extraction unavailable (${err instanceof Error ? err.message : 'unknown error'}) — used pattern-based extraction`,
+      };
+    }
+  }
+  return { requirements: extractRequirementsHeuristic(text, sourceType, sourceRef), extractor: 'heuristic' };
+}
+
 export async function parseDocument(
   buffer: Buffer,
   filename: string,
   sourceType: 'frd' | 'brd' = 'frd'
-): Promise<Requirement[]> {
+): Promise<ExtractionResult> {
   const ext = path.extname(filename).toLowerCase();
   let text: string;
 
@@ -205,11 +270,11 @@ export async function parseDocument(
     text = buffer.toString('utf-8');
   }
 
-  return extractFrRequirements(text, sourceType, filename);
+  return extractRequirements(text, sourceType, filename);
 }
 
-export function parseConfluenceContent(text: string, sourceRef: string): Requirement[] {
-  return extractFrRequirements(text, 'confluence', sourceRef);
+export function parseConfluenceContent(text: string, sourceRef: string): Promise<ExtractionResult> {
+  return extractRequirements(text, 'confluence', sourceRef);
 }
 
 /** FR-1: accept an FRD/BRD as pasted text. */
@@ -217,8 +282,8 @@ export function parsePastedText(
   text: string,
   sourceType: 'frd' | 'brd' = 'frd',
   sourceRef = 'Pasted text'
-): Requirement[] {
-  return extractFrRequirements(text, sourceType, sourceRef);
+): Promise<ExtractionResult> {
+  return extractRequirements(text, sourceType, sourceRef);
 }
 
 export function parseJiraIssues(
@@ -233,6 +298,10 @@ export function parseJiraIssues(
       text,
       testable: text.length > 10 && isTestable(text),
       ambiguous: isAmbiguous(text),
+      confidence: issue.acceptanceCriteria ? 90 : 75,
+      rationale: issue.acceptanceCriteria
+        ? `Sourced directly from Jira issue ${issue.key}, including its acceptance criteria.`
+        : `Sourced directly from Jira issue ${issue.key}'s summary/description (no acceptance criteria field set).`,
     };
   });
 }
