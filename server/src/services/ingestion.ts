@@ -18,6 +18,18 @@ const AMBIGUOUS_PATTERNS = [
 const FR_PATTERN = /\b(FR-\d+)\b[^.]*?(?:shall|must|will)\s+(.+?)(?=\n\n|FR-\d+|$)/gis;
 const FR_LINE_PATTERN = /^(FR-\d+)\s+(.+)$/gim;
 const BRD_PATTERN = /\b(BRD-\d+)\b[^.]*?(?:shall|must|will)\s+(.+?)(?=\n\n|BRD-\d+|$)/gis;
+const BRD_LINE_PATTERN = /^(BRD-\d+)\s+(.+)$/gim;
+
+/** Requirement-bearing language — used to pull real requirements out of prose/bullet BRDs
+ * that don't use FR-/BRD- numbering (the common case for real-world documents). */
+const REQUIREMENT_VERB_PATTERN =
+  /\b(shall|must|should|will|needs? to|has to|is required to|ensures?|provides?|prevents?|allows?|restricts?|validates?|rejects?|displays?|requires?|supports?|enables?|disables?|redirects?|authenticates?|verif(?:y|ies))\b/i;
+
+const BULLET_LINE_PATTERN = /^\s*(?:[•●▪○*-]|\d+[.)]|[a-z][.)])\s+(.+)$/gim;
+
+function normalizeForDedup(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, ' ').trim();
+}
 
 function isAmbiguous(text: string): boolean {
   return AMBIGUOUS_PATTERNS.some((p) => p.test(text));
@@ -30,67 +42,136 @@ function isTestable(text: string): boolean {
   return !isAmbiguous(text);
 }
 
+/** Push a heuristically-found requirement, skipping near-duplicates by normalized text. */
+function pushHeuristicRequirement(
+  reqs: Requirement[],
+  seenText: Set<string>,
+  counter: { n: number },
+  sourceType: 'frd' | 'brd' | 'confluence',
+  sourceRef: string,
+  rawBody: string,
+  opts?: { forceAmbiguous?: boolean }
+): void {
+  const body = rawBody
+    .replace(/^[•●▪○*-]\s+/, '')
+    .replace(/^\d+(?:\.\d+)*\s+/, '')
+    .trim()
+    .replace(/\s+/g, ' ');
+  if (body.length < 10) return;
+  const norm = normalizeForDedup(body);
+  if (seenText.has(norm)) return;
+  seenText.add(norm);
+  reqs.push({
+    id: `REQ-${String(counter.n++).padStart(3, '0')}`,
+    sourceType,
+    sourceRef,
+    text: body,
+    testable: opts?.forceAmbiguous ? false : isTestable(body),
+    ambiguous: opts?.forceAmbiguous ? true : isAmbiguous(body),
+  });
+}
+
+/** Pull individual bullet/numbered list items that read like requirements (not data points). */
+function extractBulletCandidates(text: string): string[] {
+  const candidates: string[] = [];
+  const re = new RegExp(BULLET_LINE_PATTERN.source, 'gim');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const body = m[1].trim();
+    if (body.length >= 15 && body.length <= 400 && REQUIREMENT_VERB_PATTERN.test(body)) {
+      candidates.push(body);
+    }
+  }
+  return candidates;
+}
+
+/** Pull requirement-bearing sentences out of ordinary prose paragraphs. */
+function extractSentenceCandidates(text: string): string[] {
+  // Drop bullet lines first (handled separately by extractBulletCandidates) so a bullet
+  // never bleeds into an adjacent sentence when there's no punctuation between them.
+  const withoutBullets = text.replace(new RegExp(BULLET_LINE_PATTERN.source, 'gim'), '');
+  // Segment by numbered sub-headers (e.g. "2.1", "3.2") first — without this, unrelated
+  // numbered items with no punctuation between them (common in real BRDs) merge into one run.
+  const blocks = withoutBullets.split(/\n(?=\d+(?:\.\d+)*\s)/);
+  const results: string[] = [];
+  for (const block of blocks) {
+    const collapsed = block.replace(/\s+/g, ' ').trim();
+    const sentences = collapsed.split(/(?<=[.!?])\s+(?=[A-Z])/);
+    for (const s of sentences) {
+      const trimmed = s.trim();
+      if (trimmed.length >= 15 && trimmed.length <= 400 && REQUIREMENT_VERB_PATTERN.test(trimmed)) {
+        results.push(trimmed);
+      }
+    }
+  }
+  return results;
+}
+
 function extractFrRequirements(
   text: string,
   sourceType: 'frd' | 'brd' | 'confluence',
   sourceRef: string
 ): Requirement[] {
   const reqs: Requirement[] = [];
-  const seen = new Set<string>();
+  const seenIds = new Set<string>();
+  const seenText = new Set<string>();
+  const counter = { n: 1 };
 
-  // Match "FR-1 QUTIE shall ..." style
+  // Match "FR-1 QUTIE shall ..." / "BRD-1 ... shall ..." block style
   let match: RegExpExecArray | null;
-  const combined = new RegExp(FR_PATTERN.source, 'gis');
-  while ((match = combined.exec(text)) !== null) {
-    const id = match[1];
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const body = match[2].trim().replace(/\s+/g, ' ');
-    reqs.push({
-      id,
-      sourceType,
-      sourceRef,
-      text: body,
-      testable: isTestable(body),
-      ambiguous: isAmbiguous(body),
-    });
+  for (const pattern of [FR_PATTERN, BRD_PATTERN]) {
+    const combined = new RegExp(pattern.source, 'gis');
+    while ((match = combined.exec(text)) !== null) {
+      const id = match[1];
+      if (seenIds.has(id)) continue;
+      const body = match[2].trim().replace(/\s+/g, ' ');
+      if (body.length < 10) continue;
+      seenIds.add(id);
+      seenText.add(normalizeForDedup(body));
+      reqs.push({ id, sourceType, sourceRef, text: body, testable: isTestable(body), ambiguous: isAmbiguous(body) });
+    }
   }
 
-  // Fallback: line-by-line FR-XX
-  const lineRe = new RegExp(FR_LINE_PATTERN.source, 'gim');
-  while ((match = lineRe.exec(text)) !== null) {
-    const id = match[1];
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const body = match[2].trim().replace(/\s+/g, ' ');
-    if (body.length < 10) continue;
-    reqs.push({
-      id,
-      sourceType,
-      sourceRef,
-      text: body,
-      testable: isTestable(body),
-      ambiguous: isAmbiguous(body),
-    });
+  // Fallback: line-by-line "FR-XX ..." / "BRD-XX ..."
+  for (const pattern of [FR_LINE_PATTERN, BRD_LINE_PATTERN]) {
+    const lineRe = new RegExp(pattern.source, 'gim');
+    while ((match = lineRe.exec(text)) !== null) {
+      const id = match[1];
+      if (seenIds.has(id)) continue;
+      const body = match[2].trim().replace(/\s+/g, ' ');
+      if (body.length < 10) continue;
+      seenIds.add(id);
+      seenText.add(normalizeForDedup(body));
+      reqs.push({ id, sourceType, sourceRef, text: body, testable: isTestable(body), ambiguous: isAmbiguous(body) });
+    }
   }
 
-  // Section-based fallback for numbered requirements
+  // Most real-world BRDs aren't FR-/BRD-numbered — pull requirement-bearing bullets and
+  // sentences directly out of the prose instead of guessing from section headers alone.
+  for (const body of extractBulletCandidates(text)) {
+    pushHeuristicRequirement(reqs, seenText, counter, sourceType, sourceRef, body);
+  }
+  for (const body of extractSentenceCandidates(text)) {
+    pushHeuristicRequirement(reqs, seenText, counter, sourceType, sourceRef, body);
+  }
+
+  // Last resort: nothing structured was found at all. Chunk by numbered section headers,
+  // trimmed to a sentence boundary rather than an arbitrary mid-word cut, and flag every
+  // chunk as ambiguous — we have no confidence these are clean, atomic, testable statements,
+  // so surface them for review (FR-4) instead of silently feeding them to generation.
   if (reqs.length === 0) {
     const sections = text.split(/\n(?=\d+\.\d+\s)/);
-    sections.forEach((section, i) => {
-      const id = `REQ-${String(i + 1).padStart(3, '0')}`;
-      const body = section.trim().slice(0, 500);
-      if (body.length > 30) {
-        reqs.push({
-          id,
-          sourceType,
-          sourceRef,
-          text: body,
-          testable: isTestable(body),
-          ambiguous: isAmbiguous(body),
-        });
+    for (const section of sections) {
+      const trimmed = section.trim();
+      if (trimmed.length <= 30) continue;
+      const cap = 800;
+      let body = trimmed.length > cap ? trimmed.slice(0, cap) : trimmed;
+      if (trimmed.length > cap) {
+        const lastBoundary = Math.max(body.lastIndexOf('. '), body.lastIndexOf('.\n'));
+        if (lastBoundary > 100) body = body.slice(0, lastBoundary + 1);
       }
-    });
+      pushHeuristicRequirement(reqs, seenText, counter, sourceType, sourceRef, body, { forceAmbiguous: true });
+    }
   }
 
   return reqs;

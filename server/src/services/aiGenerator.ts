@@ -185,6 +185,9 @@ export async function generateTestCasesWithAI(
       thinking: { type: 'adaptive' },
       system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
       output_config: {
+        // Medium effort: this is a well-specified schema-constrained transformation, not an
+        // open-ended task — lower effort keeps output literal and consistent run-to-run.
+        effort: 'medium',
         format: { type: 'json_schema', schema: OUTPUT_SCHEMA as unknown as Record<string, unknown> },
       },
       messages: [{ role: 'user', content: buildUserPrompt(testable, instructions, pageContext) }],
