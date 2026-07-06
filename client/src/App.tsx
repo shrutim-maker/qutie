@@ -191,6 +191,24 @@ export default function App() {
     }
   };
 
+  const handleClearRuns = async () => {
+    if (!window.confirm('Clear all run history, results, and bugs? Requirements and test cases are kept.')) {
+      return;
+    }
+    try {
+      await api.clearRuns();
+      setDashboard(null);
+      setLatestRun(null);
+      setResults([]);
+      setBugs([]);
+      setLiveProgress(null);
+      setRunProgress(0);
+      setRunLabel('Ready to run');
+    } catch (err) {
+      setGenStatus(err instanceof Error ? err.message : 'Clear failed');
+    }
+  };
+
   const sourceIcon = (sourceType: string) => {
     if (sourceType === 'jira') return '✓';
     if (sourceType === 'confluence') return '☁';
@@ -947,6 +965,11 @@ export default function App() {
 
           {/* DASHBOARD */}
           <section className={`view ${view === 'dash' ? 'active' : ''}`}>
+            {hasRuns && (
+              <div className="source-clear-row">
+                <button type="button" className="source-clear-btn" onClick={handleClearRuns}>Clear all run history</button>
+              </div>
+            )}
             {!hasRuns ? (
               <div className="card"><div className="empty"><QutieMark size={60} /><p>No runs yet. Complete a test run to see release readiness, trends, and bug severity here.</p></div></div>
             ) : (

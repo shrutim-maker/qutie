@@ -357,6 +357,20 @@ apiRouter.delete('/requirements', (_req, res) => {
   res.json({ removed: total, ...requirementsResponse() });
 });
 
+/** Full reset: clear run history (and anything derived from it) without touching requirements/test cases. */
+apiRouter.delete('/runs', (_req, res) => {
+  const removed = sessionRuns.length;
+  db.prepare('DELETE FROM bugs').run();
+  db.prepare('DELETE FROM results').run();
+  db.prepare('DELETE FROM test_runs').run();
+  sessionRuns = [];
+  sessionResults = [];
+  sessionBugs = [];
+  filedSignatures.clear();
+  audit('user', 'clear_runs', { removed });
+  res.json({ removed });
+});
+
 apiRouter.post('/ingest/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });

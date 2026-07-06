@@ -50,6 +50,7 @@ export const api = {
       '/requirements',
       { method: 'DELETE' }
     ),
+  clearRuns: () => request<{ removed: number }>('/runs', { method: 'DELETE' }),
   getInstructions: () => request<{ instructions: string }>('/instructions'),
   setInstructions: (instructions: string) =>
     request<{ instructions: string }>('/instructions', { method: 'POST', body: JSON.stringify({ instructions }) }),
