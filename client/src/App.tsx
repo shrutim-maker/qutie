@@ -1055,8 +1055,30 @@ export default function App() {
           {/* DASHBOARD */}
           <section className={`view ${view === 'dash' ? 'active' : ''}`}>
             {hasRuns && (
-              <div className="source-clear-row">
-                <button type="button" className="source-clear-btn" onClick={handleClearRuns}>Clear all run history</button>
+              <div className="dash-toolbar">
+                <div className="dash-run-meta">
+                  <span className="dash-run-target">{latestRun?.targetUrl}</span>
+                  {latestRun?.timestamp && (
+                    <span className="dash-run-time">
+                      {new Date(latestRun.timestamp).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}
+                    </span>
+                  )}
+                  {latestRun?.summary && (
+                    <span className="dash-run-counts">
+                      {latestRun.summary.total} test cases · {latestRun.summary.passed} passed · {latestRun.summary.failed} failed
+                      {latestRun.summary.blocked ? ` · ${latestRun.summary.blocked} blocked` : ''}
+                    </span>
+                  )}
+                </div>
+                <div className="dash-toolbar-actions">
+                  {latestRun?.id && (
+                    <>
+                      <a className="dl-btn" href={`/api/export/${latestRun.id}?format=md`} download>⬇ Report (Markdown)</a>
+                      <a className="dl-btn" href={`/api/export/${latestRun.id}`} download>⬇ Raw data (JSON)</a>
+                    </>
+                  )}
+                  <button type="button" className="source-clear-btn" onClick={handleClearRuns}>Clear all run history</button>
+                </div>
               </div>
             )}
             {!hasRuns ? (
@@ -1103,7 +1125,9 @@ export default function App() {
                 <div className="grid-2">
                   <div className="card">
                     <div className="card-h">Pass rate trend</div>
-                    <div className="card-sub">Last five runs</div>
+                    <div className="card-sub">
+                      {(dashboard?.trend ?? []).length <= 1 ? 'Run the suite again to start building a trend' : `Last ${(dashboard?.trend ?? []).length} runs`}
+                    </div>
                     {(dashboard?.trend ?? []).length === 0 ? (
                       <div className="empty" style={{ padding: 30 }}><p>Run the suite to build a trend.</p></div>
                     ) : (
@@ -1122,13 +1146,21 @@ export default function App() {
                     <div className="card-h">Open bugs by severity</div>
                     <div className="card-sub">From latest run</div>
                     <div style={{ marginTop: 14 }}>
-                      {['Critical', 'Major', 'Design', 'Minor'].map((sev) => (
-                        <div className="sevrow" key={sev}>
-                          <div className="sl">{sev}</div>
-                          <div className="mini"><span className="mini-fill" style={{ width: `${(dashboard?.severityCounts[sev] ?? 0) * 33}%`, background: sev === 'Critical' ? 'var(--alert)' : sev === 'Major' ? '#b46a1e' : sev === 'Design' ? '#6a3bc0' : 'var(--new)' }} /></div>
-                          <div className="sc">{dashboard?.severityCounts[sev] ?? (latestRun ? countSeverity(latestRun.bugs, sev) : 0)}</div>
-                        </div>
-                      ))}
+                      {(() => {
+                        const counts = dashboard?.severityCounts ?? { Critical: 0, Major: 0, Design: 0, Minor: 0 };
+                        const maxCount = Math.max(1, ...Object.values(counts));
+                        return ['Critical', 'Major', 'Design', 'Minor'].map((sev) => {
+                          const n = counts[sev] ?? 0;
+                          const width = n === 0 ? 0 : Math.max(10, Math.round((n / maxCount) * 100));
+                          return (
+                            <div className="sevrow" key={sev}>
+                              <div className="sl">{sev}</div>
+                              <div className="mini"><span className="mini-fill" style={{ width: `${width}%`, background: sev === 'Critical' ? 'var(--alert)' : sev === 'Major' ? '#b46a1e' : sev === 'Design' ? '#6a3bc0' : 'var(--new)' }} /></div>
+                              <div className="sc">{n}</div>
+                            </div>
+                          );
+                        });
+                      })()}
                     </div>
                   </div>
                 </div>
@@ -1325,9 +1357,6 @@ function ScoreRow({ label, value, width, color }: { label: string; value: string
   );
 }
 
-function countSeverity(bugs: BugReport[], sev: string) {
-  return bugs.filter((b) => b.severityLabel === sev).length;
-}
 
 function NavIcon({ view }: { view: View }) {
   const props = { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, width: 20, height: 20 };

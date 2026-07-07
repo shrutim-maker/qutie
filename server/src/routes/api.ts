@@ -34,7 +34,8 @@ import {
   fetchConfluencePageByTitle,
   ingestConfluencePage,
 } from '../services/confluence.js';
-import type { Requirement, TestCase, TestResult, BugReport, TestStep } from '../types.js';
+import { buildMarkdownReport } from '../services/reportBuilder.js';
+import type { Requirement, TestCase, TestResult, BugReport, TestStep, TestRun } from '../types.js';
 
 const upload = multer({ storage: multer.memoryStorage() });
 export const apiRouter = Router();
@@ -898,8 +899,14 @@ apiRouter.get('/dashboard', (_req, res) => {
     current: i === sessionRuns.slice(0, 5).length - 1,
   }));
 
+  // Use the latest run's own bug list, not the module-level sessionBugs — that variable gets
+  // pruned to empty whenever requirements/test cases are cleared after the run completed,
+  // which orphaned it from the run's persisted data and made this panel silently go to zero.
   const severityCounts = { Critical: 0, Major: 0, Design: 0, Minor: 0 };
-  for (const b of sessionBugs.filter((x) => x.status === 'filed' || x.status === 'pending')) {
+  const latestBugs = ((latest?.bugs as BugReport[] | undefined) ?? []).filter((x) =>
+    ['pending', 'filed', 'linked', 'duplicate'].includes(x.status)
+  );
+  for (const b of latestBugs) {
     if (b.severityLabel in severityCounts) severityCounts[b.severityLabel as keyof typeof severityCounts]++;
     else severityCounts.Minor++;
   }
@@ -915,6 +922,14 @@ apiRouter.get('/dashboard', (_req, res) => {
 apiRouter.get('/export/:runId', (req, res) => {
   const run = sessionRuns.find((r) => r.id === req.params.runId);
   if (!run) return res.status(404).json({ error: 'Run not found' });
+
+  if (req.query.format === 'md') {
+    const markdown = buildMarkdownReport(run as unknown as TestRun);
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename=qutie-report-${req.params.runId}.md`);
+    return res.send(markdown);
+  }
+
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Content-Disposition', `attachment; filename=qutie-run-${req.params.runId}.json`);
   res.json(run);

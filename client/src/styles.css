@@ -105,6 +105,16 @@ input{font-family:inherit}
 .source-clear-btn{border:none;background:transparent;color:var(--t-muted);font-size:9px;cursor:pointer;text-decoration:underline;padding:0}
 .source-clear-btn:hover{color:var(--fail)}
 
+/* ── Dashboard toolbar ────────────────────────────────── */
+.dash-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+.dash-run-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:10px;color:var(--t-secondary)}
+.dash-run-target{font-weight:600;color:var(--t-dark)}
+.dash-run-time,.dash-run-counts{color:var(--t-muted)}
+.dash-run-meta>span:not(:last-child)::after{content:'·';margin-left:10px;color:var(--b-med)}
+.dash-toolbar-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.dl-btn{display:inline-flex;align-items:center;gap:6px;font-size:9.5px;font-weight:500;color:var(--t-secondary);background:var(--white);border:1px solid var(--b-input);padding:7px 13px;border-radius:var(--radius-pill);text-decoration:none;transition:.15s}
+.dl-btn:hover{border-color:var(--outline);color:var(--link);box-shadow:var(--shadow-sm)}
+
 /* ── Extracted requirements ───────────────────────────── */
 .extractor-note{font-size:9.3px;color:var(--t-secondary);background:var(--info-tint);border:1px solid rgba(2,136,250,.14);border-radius:var(--radius-sm);padding:8px 12px;margin-bottom:10px}
 .req-toggle-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--b-input);background:var(--white);color:var(--t-secondary);font-size:10px;font-weight:500;padding:7px 13px;border-radius:var(--radius-pill);transition:.15s}
