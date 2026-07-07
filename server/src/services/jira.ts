@@ -210,7 +210,17 @@ export async function fetchJiraIssues(jql: string): Promise<
     body: JSON.stringify({ jql, maxResults: 50, fields: ['summary', 'description'] }),
   });
 
-  if (!res.ok) throw new Error(`Jira search failed: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    let detail = body;
+    try {
+      const parsed = JSON.parse(body) as { errorMessages?: string[] };
+      if (parsed.errorMessages?.length) detail = parsed.errorMessages.join('; ');
+    } catch {
+      /* not JSON — use raw body */
+    }
+    throw new Error(`Jira search failed (${res.status}): ${detail || 'no details returned'}`);
+  }
   const data = (await res.json()) as {
     issues: Array<{ key: string; fields: { summary: string; description?: unknown } }>;
   };

@@ -446,7 +446,12 @@ apiRouter.post('/ingest/jira', async (req, res) => {
           error: 'Jira is not configured. Set JIRA_EMAIL and JIRA_API_TOKEN, or provide issue keys.',
         });
       }
-      issues = await fetchJiraIssues(jql ?? 'ORDER BY created DESC');
+      // Jira Cloud's search endpoint rejects unbounded JQL — scope the default query to the
+      // configured project so "fetch with no query" doesn't 400.
+      const defaultJql = getJiraConfig()
+        ? `project = "${getJiraConfig()!.projectKey}" ORDER BY created DESC`
+        : 'ORDER BY created DESC';
+      issues = await fetchJiraIssues(jql ?? defaultJql);
     }
 
     if (!issues.length) {
