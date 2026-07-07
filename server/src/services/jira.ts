@@ -191,6 +191,74 @@ export async function fetchJiraIssuesByKeys(
   return fetchJiraIssues(jql);
 }
 
+/** Extract an issue key from either a bare key ("PROJ-123") or a full ticket URL (.../browse/PROJ-123). */
+export function parseJiraKeyFromInput(input: string): string | null {
+  const trimmed = input.trim();
+  const bareMatch = trimmed.match(/^([A-Za-z][A-Za-z0-9]*-\d+)$/);
+  if (bareMatch) return bareMatch[1].toUpperCase();
+  const urlMatch = trimmed.match(/\/browse\/([A-Za-z][A-Za-z0-9]*-\d+)/i);
+  if (urlMatch) return urlMatch[1].toUpperCase();
+  return null;
+}
+
+export interface JiraAttachment {
+  id: string;
+  filename: string;
+  mimeType: string;
+  contentUrl: string;
+  size: number;
+}
+
+/** Fetch a single issue's summary/description plus its attachment list (not included in bulk JQL search). */
+export async function fetchJiraIssueWithAttachments(key: string): Promise<{
+  key: string;
+  summary: string;
+  description?: string;
+  attachments: JiraAttachment[];
+}> {
+  const config = getJiraConfig();
+  if (!config) {
+    throw new Error('Jira is not configured. Set JIRA_EMAIL and JIRA_API_TOKEN.');
+  }
+  const auth = Buffer.from(`${config.email}:${config.apiToken}`).toString('base64');
+  const res = await fetch(`${config.baseUrl}/rest/api/3/issue/${key}?fields=summary,description,attachment`, {
+    headers: { Authorization: `Basic ${auth}`, Accept: 'application/json' },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Could not fetch Jira issue ${key} (${res.status}): ${body.slice(0, 300) || 'no details returned'}`);
+  }
+  const data = (await res.json()) as {
+    key: string;
+    fields: {
+      summary: string;
+      description?: unknown;
+      attachment?: Array<{ id: string; filename: string; mimeType: string; content: string; size: number }>;
+    };
+  };
+  return {
+    key: data.key,
+    summary: data.fields.summary,
+    description: extractPlainDescription(data.fields.description),
+    attachments: (data.fields.attachment ?? []).map((a) => ({
+      id: a.id,
+      filename: a.filename,
+      mimeType: a.mimeType,
+      contentUrl: a.content,
+      size: a.size,
+    })),
+  };
+}
+
+export async function downloadJiraAttachment(contentUrl: string): Promise<Buffer> {
+  const config = getJiraConfig();
+  if (!config) throw new Error('Jira is not configured.');
+  const auth = Buffer.from(`${config.email}:${config.apiToken}`).toString('base64');
+  const res = await fetch(contentUrl, { headers: { Authorization: `Basic ${auth}` } });
+  if (!res.ok) throw new Error(`Could not download attachment (${res.status})`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
 export async function fetchJiraIssues(jql: string): Promise<
   Array<{ key: string; summary: string; description?: string }>
 > {

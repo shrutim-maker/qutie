@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
+import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { db, audit, getSessionState, setSessionState } from '../db.js';
 import { parseDocument, parseJiraIssues, parsePastedText } from '../services/ingestion.js';
@@ -17,7 +18,16 @@ import {
   pruneStaleProgress,
 } from '../services/runProgress.js';
 import { generateBugReports, deduplicateBugs, computeReadinessScore, computeBugWeight, createDemoBug } from '../services/bugs.js';
-import { buildJiraPayload, fileBugToJira, fetchJiraIssues, fetchJiraIssuesByKeys, getJiraConfig } from '../services/jira.js';
+import {
+  buildJiraPayload,
+  fileBugToJira,
+  fetchJiraIssues,
+  fetchJiraIssuesByKeys,
+  fetchJiraIssueWithAttachments,
+  downloadJiraAttachment,
+  parseJiraKeyFromInput,
+  getJiraConfig,
+} from '../services/jira.js';
 import {
   fetchConfluencePageById,
   fetchConfluencePageByUrl,
@@ -428,12 +438,59 @@ apiRouter.post('/ingest/confluence', async (req, res) => {
   }
 });
 
+const PARSEABLE_ATTACHMENT_EXTS = new Set(['.docx', '.pdf', '.md', '.txt']);
+
 apiRouter.post('/ingest/jira', async (req, res) => {
   try {
-    const { jql, issueKeys } = req.body;
+    const { jql, issueKeys, ticketUrl } = req.body;
     let issues: Array<{ key: string; summary: string; description?: string }> = [];
+    let attachmentReqs: Requirement[] = [];
+    let attachmentNote: string | undefined;
 
-    if (issueKeys?.length) {
+    if (ticketUrl) {
+      if (!getJiraConfig()) {
+        return res.status(400).json({
+          error: 'Jira credentials required to fetch a ticket. Set JIRA_EMAIL and JIRA_API_TOKEN.',
+        });
+      }
+      const key = parseJiraKeyFromInput(String(ticketUrl));
+      if (!key) {
+        return res.status(400).json({
+          error: 'Could not find an issue key in that link. Paste a ticket URL like https://your-site.atlassian.net/browse/PROJ-123, or just the key (PROJ-123).',
+        });
+      }
+
+      const issue = await fetchJiraIssueWithAttachments(key);
+      issues = [{ key: issue.key, summary: issue.summary, description: issue.description }];
+
+      const readFiles: string[] = [];
+      const skippedFiles: string[] = [];
+      for (const att of issue.attachments) {
+        const ext = path.extname(att.filename).toLowerCase();
+        if (!PARSEABLE_ATTACHMENT_EXTS.has(ext)) {
+          skippedFiles.push(att.filename);
+          continue;
+        }
+        try {
+          const buffer = await downloadJiraAttachment(att.contentUrl);
+          const { requirements } = await parseDocument(buffer, att.filename, 'frd');
+          attachmentReqs.push(
+            ...requirements.map((r) => ({ ...r, sourceType: 'jira' as const, sourceRef: `${issue.key}: ${att.filename}` }))
+          );
+          readFiles.push(att.filename);
+        } catch (err) {
+          skippedFiles.push(`${att.filename} (${err instanceof Error ? err.message : 'failed to read'})`);
+        }
+      }
+      if (readFiles.length || skippedFiles.length) {
+        attachmentNote = [
+          readFiles.length ? `Read attachments: ${readFiles.join(', ')}` : null,
+          skippedFiles.length ? `Skipped: ${skippedFiles.join(', ')}` : null,
+        ]
+          .filter(Boolean)
+          .join(' — ');
+      }
+    } else if (issueKeys?.length) {
       if (!getJiraConfig()) {
         return res.status(400).json({
           error: 'Jira credentials required to fetch issue details. Set JIRA_EMAIL and JIRA_API_TOKEN.',
@@ -462,10 +519,10 @@ apiRouter.post('/ingest/jira', async (req, res) => {
       });
     }
 
-    const parsed = parseJiraIssues(issues);
+    const parsed = [...parseJiraIssues(issues), ...attachmentReqs];
     const inserted = upsertSourceRequirements(parsed);
-    audit('user', 'ingest_jira', { count: inserted.length });
-    res.json({ added: inserted.length, ...requirementsResponse(), configured: !!getJiraConfig() });
+    audit('user', 'ingest_jira', { count: inserted.length, viaTicketUrl: !!ticketUrl, attachmentsRead: attachmentReqs.length > 0 });
+    res.json({ added: inserted.length, ...requirementsResponse(), configured: !!getJiraConfig(), attachmentNote });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Jira ingest failed' });
   }

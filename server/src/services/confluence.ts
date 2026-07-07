@@ -68,6 +68,44 @@ export function parsePageIdFromUrl(pageUrl: string): string | null {
   return match?.[1] ?? null;
 }
 
+/**
+ * Resolve a page ID from any real-world Confluence URL a user might paste — not just the
+ * canonical /wiki/spaces/{key}/pages/{id}/{title} form. Handles the tiny-link format Confluence's
+ * "Copy link" button gives by default (/wiki/x/{code}) and space-overview URLs (no page ID at all,
+ * resolved via the space's homepage).
+ */
+async function resolvePageIdFromUrl(pageUrl: string, config: ConfluenceConfig): Promise<string> {
+  const direct = parsePageIdFromUrl(pageUrl);
+  if (direct) return direct;
+
+  const tinyMatch = pageUrl.match(/\/wiki\/x\/([A-Za-z0-9]+)/);
+  if (tinyMatch) {
+    const res = await fetch(pageUrl, {
+      headers: { Authorization: authHeader(config), Accept: 'text/html' },
+      redirect: 'follow',
+    });
+    // The redirect target may itself be a space-overview alias (e.g. when the short link
+    // points at a space's homepage) rather than a canonical /pages/{id}/ URL — recurse so
+    // that case is handled by the same logic instead of duplicating it.
+    if (res.url && res.url !== pageUrl) return resolvePageIdFromUrl(res.url, config);
+    throw new Error('Could not resolve that Confluence short link to a page — open it in a browser and paste the full page URL instead');
+  }
+
+  const overviewMatch = pageUrl.match(/\/wiki\/spaces\/([^/]+)\/overview/);
+  if (overviewMatch) {
+    const spaceKey = overviewMatch[1];
+    const res = await fetch(`${apiBase(config)}/space/${spaceKey}?expand=homepage`, {
+      headers: { Authorization: authHeader(config), Accept: 'application/json' },
+    });
+    if (!res.ok) throw new Error(`Could not resolve Confluence space "${spaceKey}" (${res.status})`);
+    const data = (await res.json()) as { homepage?: { id: string } };
+    if (data.homepage?.id) return data.homepage.id;
+    throw new Error(`Space "${spaceKey}" has no homepage set`);
+  }
+
+  throw new Error('Could not find a page ID in that Confluence URL — paste a link to a specific page');
+}
+
 interface ConfluenceApiPage {
   id: string;
   title: string;
@@ -112,9 +150,14 @@ export async function fetchConfluencePageByUrl(
   pageUrl: string,
   overrides?: { baseUrl?: string; email?: string; apiToken?: string }
 ): Promise<ConfluencePage> {
-  const pageId = parsePageIdFromUrl(pageUrl);
-  if (!pageId) throw new Error('Could not parse page ID from Confluence URL');
-  return fetchConfluencePageById(pageId, overrides);
+  const config = getConfluenceConfig(overrides);
+  if (!config) {
+    throw new Error(
+      'Confluence is not configured. Set CONFLUENCE_EMAIL and CONFLUENCE_API_TOKEN (or JIRA_* equivalents).'
+    );
+  }
+  const pageId = await resolvePageIdFromUrl(pageUrl, config);
+  return toPage(config, await fetchPageRaw(config, pageId));
 }
 
 export async function fetchConfluencePageByTitle(

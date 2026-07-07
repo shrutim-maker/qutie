@@ -77,10 +77,15 @@ export const api = {
       extractor?: 'ai' | 'heuristic';
       extractorNote?: string;
     }>('/ingest/confluence', { method: 'POST', body: JSON.stringify(body) }),
-  ingestJira: (jql?: string, issueKeys?: string[]) =>
-    request<{ requirements: import('./types').Requirement[]; total: number; configured?: boolean }>('/ingest/jira', {
+  ingestJira: (body: { jql?: string; issueKeys?: string[]; ticketUrl?: string }) =>
+    request<{
+      requirements: import('./types').Requirement[];
+      total: number;
+      configured?: boolean;
+      attachmentNote?: string;
+    }>('/ingest/jira', {
       method: 'POST',
-      body: JSON.stringify({ jql, issueKeys }),
+      body: JSON.stringify(body),
     }),
   generate: (body: GenerateBody = {}) =>
     request<{

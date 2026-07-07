@@ -67,6 +67,8 @@ export default function App() {
   const [confluenceBaseUrl, setConfluenceBaseUrl] = useState('');
   const [jiraOpen, setJiraOpen] = useState(false);
   const [jiraQuery, setJiraQuery] = useState('');
+  const [jiraMode, setJiraMode] = useState<'ticketUrl' | 'jql'>('ticketUrl');
+  const [jiraTicketUrl, setJiraTicketUrl] = useState('');
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [pasteSourceType, setPasteSourceType] = useState<'frd' | 'brd'>('frd');
@@ -456,14 +458,18 @@ export default function App() {
 
   const handleJiraIngest = async () => {
     setIngesting(true);
-    setIngestLabel('Fetching and reading Jira issues...');
+    setIngestLabel(
+      jiraMode === 'ticketUrl' ? 'Fetching the Jira ticket and reading its attachments...' : 'Fetching and reading Jira issues...'
+    );
     try {
-      const data = await api.ingestJira(jiraQuery || undefined);
+      const data = await api.ingestJira(jiraMode === 'ticketUrl' ? { ticketUrl: jiraTicketUrl } : { jql: jiraQuery || undefined });
       await refreshRequirements();
-      setGenStatus(`Ingested Jira issues — ${data.total} requirements total`);
+      const noteSuffix = data.attachmentNote ? ` — ${data.attachmentNote}` : '';
+      setGenStatus(`Ingested Jira issues — ${data.total} requirements total${noteSuffix}`);
       setReqListOpen(true);
       setJiraOpen(false);
       setJiraQuery('');
+      setJiraTicketUrl('');
     } catch (err) {
       setGenStatus(err instanceof Error ? err.message : 'Jira ingest failed');
     } finally {
@@ -1216,13 +1222,44 @@ export default function App() {
         <div className="modal">
           <div className="modal-h"><h3>Connect Jira</h3><button className="btn btn-ghost" onClick={() => setJiraOpen(false)}>✕</button></div>
           <div className="modal-b">
-            <div style={{ fontSize: 9, color: 'var(--t-muted)', marginBottom: 9 }}>Enter a JQL query. Requires JIRA_EMAIL and JIRA_API_TOKEN in server env.</div>
-            <input value={jiraQuery} onChange={(e) => setJiraQuery(e.target.value)} placeholder="project=MYPROJ ORDER BY created DESC" style={{ width: '100%', padding: 10, fontSize: 11, borderRadius: 8, border: '1px solid var(--outline)', background: 'var(--surface)', color: 'var(--t-primary)' }} />
+            <div style={{ fontSize: 9, color: 'var(--t-muted)', marginBottom: 12 }}>
+              Requires JIRA_EMAIL and JIRA_API_TOKEN in server env.
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              {(['ticketUrl', 'jql'] as const).map((mode) => (
+                <button key={mode} className={`btn ${jiraMode === mode ? 'btn-primary' : 'btn-ghost'}`} style={{ fontSize: 9 }} onClick={() => setJiraMode(mode)}>
+                  {mode === 'ticketUrl' ? 'Ticket link' : 'JQL query'}
+                </button>
+              ))}
+            </div>
+            {jiraMode === 'ticketUrl' ? (
+              <div className="field">
+                <label>Ticket URL or key</label>
+                <input
+                  value={jiraTicketUrl}
+                  onChange={(e) => setJiraTicketUrl(e.target.value)}
+                  placeholder="https://your-org.atlassian.net/browse/PROJ-123 or PROJ-123"
+                  style={{ width: '100%', padding: 10, fontSize: 11, borderRadius: 8, border: '1px solid var(--outline)', background: 'var(--surface)', color: 'var(--t-primary)' }}
+                />
+                <div style={{ fontSize: 9, color: 'var(--t-muted)', marginTop: 6 }}>
+                  Fetches the ticket's summary, description, and any attached FRD/BRD documents (.docx, .pdf, .md, .txt).
+                </div>
+              </div>
+            ) : (
+              <div className="field">
+                <label>JQL query</label>
+                <input value={jiraQuery} onChange={(e) => setJiraQuery(e.target.value)} placeholder="project=MYPROJ ORDER BY created DESC" style={{ width: '100%', padding: 10, fontSize: 11, borderRadius: 8, border: '1px solid var(--outline)', background: 'var(--surface)', color: 'var(--t-primary)' }} />
+              </div>
+            )}
           </div>
           <div className="modal-f">
             <button className="btn btn-ghost" onClick={() => setJiraOpen(false)}>Cancel</button>
-            <button className="btn btn-primary" disabled={ingesting} onClick={handleJiraIngest}>
-              {ingesting ? <><span className="spinner" /> Fetching...</> : 'Fetch issues'}
+            <button
+              className="btn btn-primary"
+              disabled={ingesting || (jiraMode === 'ticketUrl' && !jiraTicketUrl.trim())}
+              onClick={handleJiraIngest}
+            >
+              {ingesting ? <><span className="spinner" /> Fetching...</> : jiraMode === 'ticketUrl' ? 'Fetch ticket' : 'Fetch issues'}
             </button>
           </div>
         </div>
